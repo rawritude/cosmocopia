@@ -194,7 +194,16 @@ function PlanetCard({
         </span>
         {picked && <span className="pickBadge">picked</span>}
       </div>
-      <div style={{ marginTop: 8, fontSize: 12, color: 'var(--dim)' }}>
+      <div
+        style={{
+          marginTop: 8,
+          fontSize: 11,
+          color: 'var(--stardust)',
+          fontFamily: 'var(--font-mono)',
+          letterSpacing: '0.05em',
+          textTransform: 'uppercase',
+        }}
+      >
         #{planet.id} · ({planet.coords.x}, {planet.coords.y})
       </div>
       <Vital label="🔥" v={v.temperature} />
@@ -232,14 +241,42 @@ function PlanetCard({
 
 function Vital({ label, v }: { label: string; v: number }) {
   const pct = Math.max(0, Math.min(100, (v / 255) * 100));
-  const colour = v < 40 || v > 220 ? '#ff7a7a' : v < 100 ? '#ffd47a' : '#9aff9a';
+  const colour = v < 40 || v > 220 ? 'var(--mars)' : v < 100 ? 'var(--solar)' : 'var(--auroral)';
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '20px 1fr 30px', alignItems: 'center', fontSize: 11, marginTop: 4 }}>
-      <span>{label}</span>
-      <div style={{ background: 'rgba(255,255,255,0.06)', height: 6, borderRadius: 3, overflow: 'hidden' }}>
+    <div
+      style={{
+        display: 'grid',
+        gridTemplateColumns: '20px 1fr 32px',
+        alignItems: 'center',
+        gap: 8,
+        fontSize: 11,
+        fontFamily: 'var(--font-mono)',
+        marginTop: 4,
+      }}
+    >
+      <span style={{ lineHeight: 1, fontSize: 12 }}>{label}</span>
+      <div
+        style={{
+          background: 'var(--pitch)',
+          height: 10,
+          border: '1px solid var(--pitch)',
+          outline: '1px solid var(--hairline)',
+          outlineOffset: -2,
+          overflow: 'hidden',
+        }}
+      >
         <div style={{ width: `${pct}%`, height: '100%', background: colour }} />
       </div>
-      <span style={{ textAlign: 'right', color: 'var(--dim)' }}>{v}</span>
+      <span
+        style={{
+          textAlign: 'right',
+          color: 'var(--stardust)',
+          fontFamily: 'var(--font-mono)',
+          fontWeight: 600,
+        }}
+      >
+        {v}
+      </span>
     </div>
   );
 }

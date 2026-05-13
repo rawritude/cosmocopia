@@ -264,11 +264,37 @@ export default function GalaxyMap() {
         ) : (
           <ul style={{ margin: 0, paddingLeft: 0, listStyle: 'none' }}>
             {SECTORS.map((s) => (
-              <li key={s.name} style={{ marginBottom: 8, fontSize: 12 }}>
-                <span style={{ display: 'inline-block', width: 12, height: 12, background: s.color, borderRadius: 3, marginRight: 8, verticalAlign: 'middle' }} />
-                <strong>{s.name}</strong>
+              <li
+                key={s.name}
+                style={{
+                  marginBottom: 12,
+                  fontSize: 12,
+                  fontFamily: 'var(--font-mono)',
+                }}
+              >
+                <span
+                  style={{
+                    display: 'inline-block',
+                    width: 12,
+                    height: 12,
+                    background: s.color,
+                    border: '1px solid var(--pitch)',
+                    marginRight: 8,
+                    verticalAlign: 'middle',
+                  }}
+                />
+                <strong style={{ fontWeight: 700, letterSpacing: '0.04em' }}>{s.name}</strong>
                 <br />
-                <span style={{ color: 'var(--dim)', marginLeft: 20 }}>r &lt; {s.r}  ·  {s.desc}</span>
+                <span
+                  style={{
+                    color: 'var(--lumen)',
+                    marginLeft: 22,
+                    fontSize: 11,
+                    fontFamily: 'var(--font-sans)',
+                  }}
+                >
+                  r &lt; {s.r} · {s.desc}
+                </span>
               </li>
             ))}
           </ul>
@@ -283,8 +309,16 @@ function PlanetDetail({ planet }: { planet: Planet }) {
   const sectorIdx = sectorOf(planet.coords.x, planet.coords.y);
   const sector = SECTORS[sectorIdx];
   return (
-    <div style={{ fontSize: 12 }}>
-      <p style={{ margin: '0 0 8px', color: 'var(--dim)' }}>
+    <div style={{ fontSize: 12, fontFamily: 'var(--font-mono)' }}>
+      <p
+        style={{
+          margin: '0 0 12px',
+          color: 'var(--stardust)',
+          fontSize: 11,
+          letterSpacing: '0.05em',
+          textTransform: 'uppercase',
+        }}
+      >
         at ({planet.coords.x}, {planet.coords.y}) · {sector.name.toLowerCase()}
       </p>
       <p style={{ margin: '0 0 4px' }}>🔥 temperature {v.temperature}</p>
@@ -292,10 +326,19 @@ function PlanetDetail({ planet }: { planet: Planet }) {
       <p style={{ margin: '0 0 4px' }}>🌑 gravity {v.gravity}</p>
       <p style={{ margin: '0 0 4px' }}>🌱 biomass {v.biomass}</p>
       <p style={{ margin: '0 0 8px' }}>✨ spirit {v.spirit}</p>
-      <p style={{ margin: '0 0 8px', color: 'var(--dim)', wordBreak: 'break-all' }}>
+      <p style={{ margin: '0 0 8px', color: 'var(--stardust)', wordBreak: 'break-all', fontSize: 11 }}>
         owner: {planet.owner ? `${planet.owner.slice(0, 5)}…${planet.owner.slice(-4)}` : '?'}
       </p>
-      <p style={{ margin: 0, color: 'var(--dim)', wordBreak: 'break-all', fontFamily: 'ui-monospace, monospace', fontSize: 10 }}>
+      <p
+        style={{
+          margin: 0,
+          color: 'var(--lumen)',
+          wordBreak: 'break-all',
+          fontFamily: 'var(--font-mono)',
+          fontSize: 10,
+          lineHeight: 1.4,
+        }}
+      >
         dna: {Array.from(planet.dna, (b) => b.toString(16).padStart(2, '0')).join('')}
       </p>
     </div>
