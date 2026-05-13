@@ -16,6 +16,21 @@ pub const IDX_GENERATION: usize = 16;
 pub const IDX_AFFINITY_RARITY: usize = 17;
 pub const IDX_RESERVED: usize = 18; // 18..32 unique salt
 
+/// Number of "trait slots" that participate in dominance/recessive
+/// inheritance. The visible DNA byte at index `i` (0..TRAIT_SLOTS) is the
+/// expressed (D) allele; the corresponding R1 and R2 alleles live in the
+/// latent blob at indices `i` and `TRAIT_SLOTS + i` respectively.
+pub const TRAIT_SLOTS: usize = 8;
+
+/// Layout of the latent blob (BytesN<32>):
+/// - bytes 0..8:   R1 allele for trait slot i
+/// - bytes 8..16:  R2 allele for trait slot i
+/// - bytes 16..32: reserved (zero today; reserved for future population /
+///   civ-tier recessives or lineage signatures).
+pub const LATENT_LEN: usize = 32;
+pub const LATENT_R1_OFFSET: usize = 0;
+pub const LATENT_R2_OFFSET: usize = TRAIT_SLOTS; // 8
+
 pub fn class_of(dna: &[u8; DNA_LEN]) -> u8 {
     (dna[IDX_CLASS] >> 4) & 0x0F
 }
@@ -56,14 +71,31 @@ pub fn from_seed(env: &Env, seed: &BytesN<32>, round: u64, token_id: u32) -> Byt
     BytesN::from_array(env, &out)
 }
 
+/// Derive the genesis latent (R1 + R2 alleles) from the same drand seed
+/// + token id. Returns 32 bytes laid out per `LATENT_*_OFFSET`.
+///
+/// Latent slices use seed bytes 8..16 and 16..24 (independent from the
+/// visible trait bytes 0..7) plus a token_id stir so siblings born on the
+/// same round get distinct latents. Anti-grinding: the same commit-reveal
+/// scheme that protects visible DNA also protects these — the seed is
+/// drand-verified and the user commits before its round is published.
+pub fn latent_from_seed(env: &Env, seed: &BytesN<32>, token_id: u32) -> BytesN<32> {
+    let s = seed.to_array();
+    let mut out = [0u8; LATENT_LEN];
+    for i in 0..TRAIT_SLOTS {
+        out[LATENT_R1_OFFSET + i] = s[(8 + i) % DNA_LEN];
+        out[LATENT_R2_OFFSET + i] = s[(16 + i) % DNA_LEN];
+    }
+    mix_token_id_into_latent(&mut out, token_id);
+    BytesN::from_array(env, &out)
+}
+
 /// Per-gene crossover with mutation. Stats are handled separately.
 ///
-/// For each gene byte 0..8:
-///   - Pick parent A or B based on a bit from `rand`.
-///   - With ~12.5% probability, XOR a mutation byte from `rand`.
-///
-/// Parent_mix (bytes 8..12) is the XOR of the parents' first four gene bytes,
-/// giving every child a deterministic lineage signature.
+/// Backwards-compat thin wrapper used by callers that don't (yet) read
+/// latent. Internally routes to crossover_with_latent passing all-zero
+/// latents for both parents, which collapses dominance probabilities back
+/// to "always pick D".
 pub fn crossover(
     env: &Env,
     a: &BytesN<32>,
@@ -72,48 +104,121 @@ pub fn crossover(
     round: u64,
     token_id: u32,
 ) -> BytesN<32> {
-    let aa = a.to_array();
-    let bb = b.to_array();
+    let zero = BytesN::from_array(env, &[0u8; LATENT_LEN]);
+    let (dna, _latent) = crossover_with_latent(env, a, &zero, b, &zero, rand, round, token_id);
+    dna
+}
+
+/// Per-trait dominance-roll crossover. For each of the 8 trait slots:
+///
+/// - Each parent contributes ONE allele to the child's pool by sampling
+///   its own (D, R1, R2) with weights ~70 / 22 / 8.
+/// - The two contributed alleles meet; one randomly becomes the child's
+///   expressed D, the other becomes the child's R1.
+/// - The child's R2 is sampled from the union of both parents' R1/R2
+///   pool so recessives keep flowing across generations even when not
+///   expressed.
+/// - A ~2% mutation chance XORs a random byte into the child's D for
+///   the slot. Mutation does not touch the recessive layer.
+///
+/// Returns (child_dna, child_latent).
+pub fn crossover_with_latent(
+    env: &Env,
+    a_dna: &BytesN<32>,
+    a_latent: &BytesN<32>,
+    b_dna: &BytesN<32>,
+    b_latent: &BytesN<32>,
+    rand: &BytesN<32>,
+    round: u64,
+    token_id: u32,
+) -> (BytesN<32>, BytesN<32>) {
+    let aa = a_dna.to_array();
+    let bb = b_dna.to_array();
+    let al = a_latent.to_array();
+    let bl = b_latent.to_array();
     let rr = rand.to_array();
-    let mut out = [0u8; DNA_LEN];
 
-    // Trait genes: per-byte crossover with mutation.
-    for i in 0..8 {
-        let bit = (rr[0] >> i) & 1;
-        let mut gene = if bit == 0 { aa[i] } else { bb[i] };
-        // Mutation chance ~12.5%.
-        if (rr[8 + i] & 0x07) == 0 {
-            gene ^= rr[16 + i];
+    let mut out_dna = [0u8; DNA_LEN];
+    let mut out_latent = [0u8; LATENT_LEN];
+
+    for i in 0..TRAIT_SLOTS {
+        // Each parent contributes one allele from its (D, R1, R2) pool.
+        let contrib_a = sample_allele(aa[i], al[i], al[LATENT_R2_OFFSET + i], rr[i]);
+        let contrib_b = sample_allele(bb[i], bl[i], bl[LATENT_R2_OFFSET + i], rr[8 + i]);
+
+        // One of the two contributions becomes the child's visible D; the
+        // other becomes its R1.
+        let swap_bit = (rr[16 + i] >> 7) & 1;
+        let (child_d, child_r1) = if swap_bit == 0 {
+            (contrib_a, contrib_b)
+        } else {
+            (contrib_b, contrib_a)
+        };
+
+        // R2 is sampled from the four recessive slots of the two parents,
+        // so recessives bleed across generations.
+        let pool = [
+            al[LATENT_R1_OFFSET + i],
+            al[LATENT_R2_OFFSET + i],
+            bl[LATENT_R1_OFFSET + i],
+            bl[LATENT_R2_OFFSET + i],
+        ];
+        let child_r2 = pool[(rr[24 + (i % 8)] & 0x03) as usize];
+
+        // Mutation: ~2% chance. Reuse rr[16+i] low bits (independent from
+        // the swap bit in the high bit).
+        let mut final_d = child_d;
+        if (rr[16 + i] & 0x3F) < 2 {
+            final_d ^= rr[(8 + i) % DNA_LEN];
         }
-        out[i] = gene;
+
+        out_dna[i] = final_d;
+        out_latent[LATENT_R1_OFFSET + i] = child_r1;
+        out_latent[LATENT_R2_OFFSET + i] = child_r2;
     }
 
-    // Lineage signature.
+    // Lineage signature (unchanged from the legacy crossover).
     for i in 0..4 {
-        out[IDX_PARENT_MIX + i] = aa[i] ^ bb[i];
+        out_dna[IDX_PARENT_MIX + i] = aa[i] ^ bb[i];
     }
+    write_birth_round(&mut out_dna, round);
+    let child_gen = aa[IDX_GENERATION]
+        .max(bb[IDX_GENERATION])
+        .saturating_add(1);
+    out_dna[IDX_GENERATION] = child_gen;
 
-    write_birth_round(&mut out, round);
-
-    let child_gen = aa[IDX_GENERATION].max(bb[IDX_GENERATION]).saturating_add(1);
-    out[IDX_GENERATION] = child_gen;
-
-    // Inherit dominant affinity, mutate rarity from rand.
+    // Inherit dominant affinity, mutate rarity.
     let aff_a = aa[IDX_AFFINITY_RARITY] & 0xF0;
     let aff_b = bb[IDX_AFFINITY_RARITY] & 0xF0;
     let rarity = (aa[IDX_AFFINITY_RARITY] & 0x0F)
         .max(bb[IDX_AFFINITY_RARITY] & 0x0F)
         .saturating_add(rr[24] & 0x01);
     let affinity = if (rr[25] & 1) == 0 { aff_a } else { aff_b };
-    out[IDX_AFFINITY_RARITY] = affinity | (rarity & 0x0F);
+    out_dna[IDX_AFFINITY_RARITY] = affinity | (rarity & 0x0F);
 
-    // Unique salt: stir rand into bytes 18..32 + XOR child token id so
-    // siblings born from the same conjoin transaction (impossible today, but
-    // robust to future batching) and same-round mints stay distinct.
-    out[IDX_RESERVED..DNA_LEN].copy_from_slice(&rr[IDX_RESERVED..DNA_LEN]);
-    mix_token_id_into_salt(&mut out, token_id);
+    // Unique salt: stir rand into bytes 18..32 + XOR child token id.
+    out_dna[IDX_RESERVED..DNA_LEN].copy_from_slice(&rr[IDX_RESERVED..DNA_LEN]);
+    mix_token_id_into_salt(&mut out_dna, token_id);
+    mix_token_id_into_latent(&mut out_latent, token_id);
 
-    BytesN::from_array(env, &out)
+    (
+        BytesN::from_array(env, &out_dna),
+        BytesN::from_array(env, &out_latent),
+    )
+}
+
+/// Sample one allele from (D, R1, R2) using `roll` as the entropy.
+///
+/// Weights: 70% D, 22% R1, 8% R2. The thresholds are chosen so the byte
+/// distribution maps cleanly: 0..179 → D, 179..235 → R1, 235..256 → R2.
+fn sample_allele(d: u8, r1: u8, r2: u8, roll: u8) -> u8 {
+    if roll < 179 {
+        d
+    } else if roll < 235 {
+        r1
+    } else {
+        r2
+    }
 }
 
 /// XORs the 4 bytes of `token_id` into the start of the reserved salt
@@ -125,4 +230,15 @@ fn mix_token_id_into_salt(out: &mut [u8; DNA_LEN], token_id: u32) {
     out[IDX_RESERVED + 1] ^= id[1];
     out[IDX_RESERVED + 2] ^= id[2];
     out[IDX_RESERVED + 3] ^= id[3];
+}
+
+/// Same idea for the latent blob — XOR token id into a reserved tail so
+/// siblings get distinct latents.
+fn mix_token_id_into_latent(out: &mut [u8; LATENT_LEN], token_id: u32) {
+    let id = token_id.to_le_bytes();
+    // Write into the reserved (16..32) region so trait slots stay intact.
+    out[16] ^= id[0];
+    out[17] ^= id[1];
+    out[18] ^= id[2];
+    out[19] ^= id[3];
 }

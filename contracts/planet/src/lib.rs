@@ -32,6 +32,10 @@ pub enum DataKey {
     LastConjoin(u32),
     NextCommitmentId,
     Commitment(u32),
+    /// Recessive allele blob (R1 + R2 per trait slot). Absent for planets
+    /// minted before the dominance system shipped — those legacy planets
+    /// behave as if they carried all-zero recessives.
+    Latent(u32),
 }
 
 #[contracterror]
@@ -228,7 +232,16 @@ impl PlanetContract {
         let seed = random_at(e, c.target_round)?;
         let token_id = Enumerable::sequential_mint(e, &c.to);
         let dna = dna::from_seed(e, &seed, c.target_round, token_id);
+        let latent = dna::latent_from_seed(e, &seed, token_id);
         write_planet(e, token_id, &dna, (x, y));
+        e.storage()
+            .persistent()
+            .set(&DataKey::Latent(token_id), &latent);
+        e.storage().persistent().extend_ttl(
+            &DataKey::Latent(token_id),
+            TTL_THRESHOLD,
+            TTL_EXTEND_TO,
+        );
 
         Born {
             owner: c.to,
@@ -325,10 +338,31 @@ impl PlanetContract {
 
         let seed = random_at(e, c.target_round)?;
         let child_id = Enumerable::sequential_mint(e, &c.to);
-        let child_dna = dna::crossover(e, &dna_a, &dna_b, &seed, c.target_round, child_id);
+        // Read parents' latent blobs with a zero fallback. Pre-dominance
+        // genesis planets have no latent stored — they contribute only
+        // visible alleles, which collapses the dominance roll to "always
+        // pick D" for that parent.
+        let latent_a = read_latent(e, parent_a);
+        let latent_b = read_latent(e, parent_b);
+        let (child_dna, child_latent) = dna::crossover_with_latent(
+            e,
+            &dna_a, &latent_a,
+            &dna_b, &latent_b,
+            &seed,
+            c.target_round,
+            child_id,
+        );
 
         let child_coords = midpoint(coords_a, coords_b);
         write_planet(e, child_id, &child_dna, child_coords);
+        e.storage()
+            .persistent()
+            .set(&DataKey::Latent(child_id), &child_latent);
+        e.storage().persistent().extend_ttl(
+            &DataKey::Latent(child_id),
+            TTL_THRESHOLD,
+            TTL_EXTEND_TO,
+        );
 
         let starting = Vitals {
             temperature: (vit_a.temperature + vit_b.temperature) / 2,
@@ -408,6 +442,17 @@ impl PlanetContract {
         let dna = read_dna(e, id)?;
         extend_planet_ttl(e, id);
         Ok(dna)
+    }
+
+    /// Return the recessive allele blob (R1 + R2 per trait slot). For
+    /// planets minted before the dominance system shipped, returns 32 zero
+    /// bytes — those legacy planets carry no recessives.
+    pub fn latent_of(e: &Env, id: u32) -> Result<BytesN<32>, Error> {
+        // Confirm the planet exists first so we don't return a spurious
+        // zero latent for an unknown id.
+        let _ = read_dna(e, id)?;
+        extend_planet_ttl(e, id);
+        Ok(read_latent(e, id))
     }
 
     pub fn vitals_of(e: &Env, id: u32) -> Result<Vitals, Error> {
@@ -634,6 +679,14 @@ fn extend_planet_ttl(e: &Env, id: u32) {
     e.storage()
         .persistent()
         .extend_ttl(&DataKey::Coords(id), TTL_THRESHOLD, TTL_EXTEND_TO);
+    // Latent may be absent for legacy planets — `has` guards the extend
+    // so we don't write a TTL marker for nonexistent storage.
+    let latent_key = DataKey::Latent(id);
+    if e.storage().persistent().has(&latent_key) {
+        e.storage()
+            .persistent()
+            .extend_ttl(&latent_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+    }
 }
 
 fn read_dna(e: &Env, id: u32) -> Result<BytesN<32>, Error> {
@@ -655,6 +708,18 @@ fn read_coords(e: &Env, id: u32) -> Result<(i32, i32), Error> {
         .persistent()
         .get(&DataKey::Coords(id))
         .ok_or(Error::UnknownPlanet)
+}
+
+/// Read a planet's latent blob with a zero fallback for legacy planets.
+/// Callers that *require* the latent to exist (rare — only used internally
+/// for breeding) should construct their own check, but for dominance rolls
+/// a zero latent collapses the math to "always pick D" for that parent
+/// which is the desired backwards-compat semantics.
+fn read_latent(e: &Env, id: u32) -> BytesN<32> {
+    e.storage()
+        .persistent()
+        .get(&DataKey::Latent(id))
+        .unwrap_or_else(|| BytesN::from_array(e, &[0u8; 32]))
 }
 
 fn check_cooldown(e: &Env, id: u32, now: u32) -> Result<(), Error> {

@@ -629,3 +629,145 @@ fn commit_genesis_rejects_non_admin() {
         .err();
     assert!(err.is_some(), "commit_genesis should reject non-admin");
 }
+
+// ---------- Dominance / recessive allele tests ----------
+
+#[test]
+fn genesis_writes_nonzero_latent() {
+    // Seed byte 0xAB → seed = [0xAB; 32]. latent_from_seed reads slots
+    // 8..16 (R1) and 16..24 (R2), then XORs token_id into bytes 16..20.
+    // For token_id 0, both R1 and R2 should be 0xAB.
+    let f = setup(0xAB);
+    let user = Address::generate(&f.env);
+    let id = mint_genesis(&f, &user, 0, 0);
+    let latent = f.planet.latent_of(&id).to_array();
+    for i in 0..dna::TRAIT_SLOTS {
+        assert_eq!(latent[dna::LATENT_R1_OFFSET + i], 0xAB);
+    }
+    // Token id 0 XOR'd into bytes 16..20 leaves them 0xAB.
+    assert_eq!(latent[dna::LATENT_R2_OFFSET], 0xAB);
+}
+
+#[test]
+fn latent_of_unknown_planet_errors() {
+    let f = setup(0x10);
+    let err = f.planet.try_latent_of(&99u32).err().unwrap().unwrap();
+    assert_eq!(err, Error::UnknownPlanet);
+}
+
+#[test]
+fn conjoin_writes_child_latent() {
+    let f = setup(0x55);
+    let user = Address::generate(&f.env);
+
+    let a = mint_genesis(&f, &user, 0, 0);
+    let b = mint_genesis(&f, &user, 5, 5);
+    let child = conjoin(&f, a, b, &user);
+
+    // Child latent exists and is the right length. Specific byte values
+    // depend on the per-trait dominance roll.
+    let latent = f.planet.latent_of(&child).to_array();
+    assert_eq!(latent.len(), 32);
+}
+
+#[test]
+fn dna_dominance_collapses_to_d_when_latents_zero() {
+    // When both parents carry zero R1/R2, every per-parent sample resolves
+    // to D (sample_allele picks D for any roll < 179). With zero latents
+    // and parents whose D bytes match, the child's D bytes must match too
+    // — modulo the ~2% mutation chance, which we drive down to zero by
+    // controlling the random seed bytes (rr[16+i] & 0x3F >= 2).
+    let env = Env::default();
+    let mut rand_bytes = [0u8; 32];
+    for i in 0..8 {
+        rand_bytes[16 + i] = 0xFC; // 0xFC & 0x3F = 60, mutation gate fails.
+    }
+    let rand = BytesN::from_array(&env, &rand_bytes);
+    let a = BytesN::from_array(&env, &[0xAA; 32]);
+    let b = BytesN::from_array(&env, &[0xAA; 32]);
+    let zero = BytesN::from_array(&env, &[0u8; 32]);
+
+    let (child_dna, _) =
+        dna::crossover_with_latent(&env, &a, &zero, &b, &zero, &rand, 0, 0);
+    let bytes = child_dna.to_array();
+    for i in 0..dna::TRAIT_SLOTS {
+        assert_eq!(
+            bytes[i], 0xAA,
+            "trait byte {} should be 0xAA when both parents D match",
+            i
+        );
+    }
+}
+
+#[test]
+fn dna_dominance_can_express_recessive() {
+    // Parents:
+    //   A: D[0] = 0x10, R1[0] = 0xCC
+    //   B: D[0] = 0x10, R1[0] = 0xCC
+    // Force both parents' allele sample to land on R1 (roll in 179..235).
+    // Force swap_bit = 0 so contrib_a (= R1_a = 0xCC) becomes child D.
+    // Disable mutation.
+    // Expected: child's slot-0 D = 0xCC (a recessive emerged).
+    let env = Env::default();
+    let mut rand_bytes = [0u8; 32];
+    rand_bytes[0] = 200; // parent A picks R1
+    rand_bytes[8] = 200; // parent B picks R1
+    rand_bytes[16] = 0x3C; // swap_bit=0, mutation gate fails
+    let rand = BytesN::from_array(&env, &rand_bytes);
+
+    let mut dna_a = [0u8; 32];
+    dna_a[0] = 0x10;
+    let dna_a = BytesN::from_array(&env, &dna_a);
+    let dna_b = dna_a.clone();
+    let mut latent_a = [0u8; 32];
+    latent_a[dna::LATENT_R1_OFFSET] = 0xCC;
+    let latent_a = BytesN::from_array(&env, &latent_a);
+    let latent_b = latent_a.clone();
+
+    let (child_dna, _) = dna::crossover_with_latent(
+        &env, &dna_a, &latent_a, &dna_b, &latent_b, &rand, 0, 0,
+    );
+    assert_eq!(child_dna.to_array()[0], 0xCC, "recessive should emerge");
+}
+
+#[test]
+fn dna_dominance_carries_recessive_to_child_latent() {
+    // Parent A has unique R2 = 0xFF in trait slot 0. The child's R2 pool
+    // draws from {a_R1, a_R2, b_R1, b_R2}; setting rr[24] & 0x03 = 1
+    // selects pool[1] = a_R2.
+    let env = Env::default();
+    let mut rand_bytes = [0u8; 32];
+    rand_bytes[24] = 1;
+    let rand = BytesN::from_array(&env, &rand_bytes);
+
+    let dna_a = BytesN::from_array(&env, &[0u8; 32]);
+    let dna_b = BytesN::from_array(&env, &[0u8; 32]);
+    let mut latent_a = [0u8; 32];
+    latent_a[dna::LATENT_R2_OFFSET] = 0xFF;
+    let latent_a = BytesN::from_array(&env, &latent_a);
+    let latent_b = BytesN::from_array(&env, &[0u8; 32]);
+
+    let (_, child_latent) = dna::crossover_with_latent(
+        &env, &dna_a, &latent_a, &dna_b, &latent_b, &rand, 0, 0,
+    );
+    assert_eq!(
+        child_latent.to_array()[dna::LATENT_R2_OFFSET],
+        0xFF,
+        "0xFF recessive should propagate from parent A's R2 into child's R2"
+    );
+}
+
+#[test]
+fn conjoin_via_full_flow_writes_latent_and_dna() {
+    // End-to-end: two genesis planets minted via the contract, conjoined,
+    // child has both DNA and latent stored.
+    let f = setup(0x77);
+    let user = Address::generate(&f.env);
+    let a = mint_genesis(&f, &user, 0, 0);
+    let b = mint_genesis(&f, &user, 3, 3);
+    let child = conjoin(&f, a, b, &user);
+    let _ = f.planet.dna_of(&child);
+    let child_latent = f.planet.latent_of(&child).to_array();
+    // At least one byte should be non-zero in a non-trivial seed.
+    assert!(child_latent.iter().any(|b| *b != 0));
+}

@@ -103,7 +103,7 @@
                               "symbol": "value"
                             },
                             "val": {
-                              "bytes": "fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa"
+                              "bytes": "abababababababababababababababababababababababababababababababab"
                             }
                           }
                         ]
@@ -198,7 +198,7 @@
               },
               "durability": "persistent",
               "val": {
-                "bytes": "fafafafafafafafa000000000000006e00fafafafafafafafafafafafafafafa"
+                "bytes": "abababababababab000000000000006e00ababababababababababababababab"
               }
             }
           },
@@ -279,7 +279,7 @@
               },
               "durability": "persistent",
               "val": {
-                "bytes": "fafafafafafafafafafafafafafafafa00000000000000000000000000000000"
+                "bytes": "abababababababababababababababab00000000000000000000000000000000"
               }
             }
           },
