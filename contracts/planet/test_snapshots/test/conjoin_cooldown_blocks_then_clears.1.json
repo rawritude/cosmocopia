@@ -15,13 +15,13 @@
           "function": {
             "contract_fn": {
               "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
-              "function_name": "mint_genesis",
+              "function_name": "commit_genesis",
               "args": [
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
                 },
                 {
-                  "u64": "1"
+                  "u64": "100"
                 },
                 {
                   "i32": 0
@@ -36,6 +36,7 @@
         }
       ]
     ],
+    [],
     [
       [
         "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
@@ -43,13 +44,13 @@
           "function": {
             "contract_fn": {
               "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
-              "function_name": "mint_genesis",
+              "function_name": "commit_genesis",
               "args": [
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
                 },
                 {
-                  "u64": "1"
+                  "u64": "100"
                 },
                 {
                   "i32": 1
@@ -64,6 +65,7 @@
         }
       ]
     ],
+    [],
     [
       [
         "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
@@ -71,47 +73,19 @@
           "function": {
             "contract_fn": {
               "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
-              "function_name": "mint_genesis",
+              "function_name": "commit_genesis",
               "args": [
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
                 },
                 {
-                  "u64": "1"
+                  "u64": "100"
                 },
                 {
                   "i32": 2
                 },
                 {
                   "i32": 2
-                }
-              ]
-            }
-          },
-          "sub_invocations": []
-        }
-      ]
-    ],
-    [
-      [
-        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4",
-        {
-          "function": {
-            "contract_fn": {
-              "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
-              "function_name": "conjoin",
-              "args": [
-                {
-                  "u32": 0
-                },
-                {
-                  "u32": 1
-                },
-                {
-                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
-                },
-                {
-                  "u64": "1"
                 }
               ]
             }
@@ -128,7 +102,37 @@
           "function": {
             "contract_fn": {
               "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
-              "function_name": "conjoin",
+              "function_name": "commit_conjoin",
+              "args": [
+                {
+                  "u32": 0
+                },
+                {
+                  "u32": 1
+                },
+                {
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
+                },
+                {
+                  "u64": "200"
+                }
+              ]
+            }
+          },
+          "sub_invocations": []
+        }
+      ]
+    ],
+    [],
+    [],
+    [
+      [
+        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4",
+        {
+          "function": {
+            "contract_fn": {
+              "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
+              "function_name": "commit_conjoin",
               "args": [
                 {
                   "u32": 0
@@ -140,7 +144,7 @@
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
                 },
                 {
-                  "u64": "1"
+                  "u64": "200"
                 }
               ]
             }
@@ -148,11 +152,12 @@
           "sub_invocations": []
         }
       ]
-    ]
+    ],
+    []
   ],
   "ledger": {
     "protocol_version": 25,
-    "sequence_number": 800,
+    "sequence_number": 840,
     "timestamp": 0,
     "network_id": "0000000000000000000000000000000000000000000000000000000000000000",
     "base_reserve": 0,
@@ -198,7 +203,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 6311999
+        "live_until": 6312015
       },
       {
         "entry": {
@@ -218,7 +223,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 6311999
+        "live_until": 6312007
       },
       {
         "entry": {
@@ -294,7 +299,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 518400
+        "live_until": 518408
       },
       {
         "entry": {
@@ -328,7 +333,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 518400
+        "live_until": 518408
       },
       {
         "entry": {
@@ -362,7 +367,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 518400
+        "live_until": 518416
       },
       {
         "entry": {
@@ -396,7 +401,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 518400
+        "live_until": 518424
       },
       {
         "entry": {
@@ -430,7 +435,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 518400
+        "live_until": 518432
       },
       {
         "entry": {
@@ -464,7 +469,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 519200
+        "live_until": 519240
       },
       {
         "entry": {
@@ -485,13 +490,13 @@
               },
               "durability": "persistent",
               "val": {
-                "bytes": "3333333333333333000000000000000100333333333333333333333333333333"
+                "bytes": "3333333333333333000000000000006e00333333333333333333333333333333"
               }
             }
           },
           "ext": "v0"
         },
-        "live_until": 518400
+        "live_until": 518408
       },
       {
         "entry": {
@@ -512,13 +517,13 @@
               },
               "durability": "persistent",
               "val": {
-                "bytes": "3333333333333333000000000000000100333233333333333333333333333333"
+                "bytes": "3333333333333333000000000000006e00333233333333333333333333333333"
               }
             }
           },
           "ext": "v0"
         },
-        "live_until": 518400
+        "live_until": 518416
       },
       {
         "entry": {
@@ -539,13 +544,13 @@
               },
               "durability": "persistent",
               "val": {
-                "bytes": "3333333333333333000000000000000100333133333333333333333333333333"
+                "bytes": "3333333333333333000000000000006e00333133333333333333333333333333"
               }
             }
           },
           "ext": "v0"
         },
-        "live_until": 518400
+        "live_until": 518424
       },
       {
         "entry": {
@@ -566,13 +571,13 @@
               },
               "durability": "persistent",
               "val": {
-                "bytes": "3333333333333333000000000000000101343033333333333333333333333333"
+                "bytes": "333333333333333300000000000000d201343033333333333333333333333333"
               }
             }
           },
           "ext": "v0"
         },
-        "live_until": 518400
+        "live_until": 518432
       },
       {
         "entry": {
@@ -593,13 +598,13 @@
               },
               "durability": "persistent",
               "val": {
-                "bytes": "3333333333333333000000000000000101343733333333333333333333333333"
+                "bytes": "333333333333333300000000000000d201343733333333333333333333333333"
               }
             }
           },
           "ext": "v0"
         },
-        "live_until": 519200
+        "live_until": 519240
       },
       {
         "entry": {
@@ -626,7 +631,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 4095
+        "live_until": 4103
       },
       {
         "entry": {
@@ -653,7 +658,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 4095
+        "live_until": 4111
       },
       {
         "entry": {
@@ -680,7 +685,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 4095
+        "live_until": 4119
       },
       {
         "entry": {
@@ -707,7 +712,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 4095
+        "live_until": 4127
       },
       {
         "entry": {
@@ -734,7 +739,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 4895
+        "live_until": 4935
       },
       {
         "entry": {
@@ -761,7 +766,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 4095
+        "live_until": 4103
       },
       {
         "entry": {
@@ -788,7 +793,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 4095
+        "live_until": 4111
       },
       {
         "entry": {
@@ -815,7 +820,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 4095
+        "live_until": 4119
       },
       {
         "entry": {
@@ -842,7 +847,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 4095
+        "live_until": 4127
       },
       {
         "entry": {
@@ -869,7 +874,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 4895
+        "live_until": 4935
       },
       {
         "entry": {
@@ -890,13 +895,13 @@
               },
               "durability": "persistent",
               "val": {
-                "u32": 800
+                "u32": 832
               }
             }
           },
           "ext": "v0"
         },
-        "live_until": 4095
+        "live_until": 4119
       },
       {
         "entry": {
@@ -917,13 +922,13 @@
               },
               "durability": "persistent",
               "val": {
-                "u32": 0
+                "u32": 24
               }
             }
           },
           "ext": "v0"
         },
-        "live_until": 4095
+        "live_until": 4119
       },
       {
         "entry": {
@@ -944,13 +949,13 @@
               },
               "durability": "persistent",
               "val": {
-                "u32": 800
+                "u32": 832
               }
             }
           },
           "ext": "v0"
         },
-        "live_until": 4895
+        "live_until": 4927
       },
       {
         "entry": {
@@ -977,7 +982,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 518400
+        "live_until": 518424
       },
       {
         "entry": {
@@ -1004,7 +1009,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 518400
+        "live_until": 518424
       },
       {
         "entry": {
@@ -1031,7 +1036,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 519200
+        "live_until": 519232
       },
       {
         "entry": {
@@ -1058,7 +1063,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 4095
+        "live_until": 4127
       },
       {
         "entry": {
@@ -1085,7 +1090,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 4895
+        "live_until": 4935
       },
       {
         "entry": {
@@ -1129,7 +1134,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 4095
+        "live_until": 4103
       },
       {
         "entry": {
@@ -1173,7 +1178,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 4095
+        "live_until": 4111
       },
       {
         "entry": {
@@ -1217,7 +1222,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 4095
+        "live_until": 4119
       },
       {
         "entry": {
@@ -1261,7 +1266,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 4095
+        "live_until": 4127
       },
       {
         "entry": {
@@ -1305,7 +1310,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 4895
+        "live_until": 4935
       },
       {
         "entry": {
@@ -1332,7 +1337,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 4095
+        "live_until": 4103
       },
       {
         "entry": {
@@ -1359,7 +1364,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 4095
+        "live_until": 4111
       },
       {
         "entry": {
@@ -1386,7 +1391,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 4095
+        "live_until": 4119
       },
       {
         "entry": {
@@ -1413,7 +1418,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 4095
+        "live_until": 4127
       },
       {
         "entry": {
@@ -1440,7 +1445,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 4895
+        "live_until": 4935
       },
       {
         "entry": {
@@ -1491,7 +1496,7 @@
                       "symbol": "last_ledger"
                     },
                     "val": {
-                      "u32": 0
+                      "u32": 8
                     }
                   },
                   {
@@ -1516,7 +1521,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 518400
+        "live_until": 518408
       },
       {
         "entry": {
@@ -1567,7 +1572,7 @@
                       "symbol": "last_ledger"
                     },
                     "val": {
-                      "u32": 0
+                      "u32": 16
                     }
                   },
                   {
@@ -1592,7 +1597,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 518400
+        "live_until": 518416
       },
       {
         "entry": {
@@ -1643,7 +1648,7 @@
                       "symbol": "last_ledger"
                     },
                     "val": {
-                      "u32": 0
+                      "u32": 24
                     }
                   },
                   {
@@ -1668,7 +1673,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 518400
+        "live_until": 518424
       },
       {
         "entry": {
@@ -1719,7 +1724,7 @@
                       "symbol": "last_ledger"
                     },
                     "val": {
-                      "u32": 0
+                      "u32": 32
                     }
                   },
                   {
@@ -1744,7 +1749,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 518400
+        "live_until": 518432
       },
       {
         "entry": {
@@ -1795,7 +1800,7 @@
                       "symbol": "last_ledger"
                     },
                     "val": {
-                      "u32": 800
+                      "u32": 840
                     }
                   },
                   {
@@ -1820,7 +1825,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 519200
+        "live_until": 519240
       },
       {
         "entry": {
@@ -1914,6 +1919,18 @@
                       "key": {
                         "vec": [
                           {
+                            "symbol": "NextCommitmentId"
+                          }
+                        ]
+                      },
+                      "val": {
+                        "u32": 5
+                      }
+                    },
+                    {
+                      "key": {
+                        "vec": [
+                          {
                             "symbol": "TokenIdCounter"
                           }
                         ]
@@ -1961,7 +1978,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 6312799
+        "live_until": 6312831
       },
       {
         "entry": {
@@ -1981,7 +1998,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 6311999
+        "live_until": 6312023
       },
       {
         "entry": {
@@ -2054,7 +2071,7 @@
                     "symbol": "drand_round"
                   },
                   "val": {
-                    "u64": "1"
+                    "u64": "210"
                   }
                 },
                 {
@@ -2107,7 +2124,7 @@
                     "symbol": "drand_round"
                   },
                   "val": {
-                    "u64": "1"
+                    "u64": "210"
                   }
                 },
                 {

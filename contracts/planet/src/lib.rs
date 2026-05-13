@@ -30,6 +30,8 @@ pub enum DataKey {
     Vitals(u32),
     Coords(u32),
     LastConjoin(u32),
+    NextCommitmentId,
+    Commitment(u32),
 }
 
 #[contracterror]
@@ -46,6 +48,48 @@ pub enum Error {
     Unhealthy = 8,
     RecipientNotParentOwner = 9,
     CooldownOutOfRange = 10,
+    UnknownCommitment = 11,
+    CommitmentNotReady = 12,
+    InvalidCommitmentKind = 13,
+}
+
+/// Anti-grinding commit-reveal: two-step flow for mint_genesis and conjoin.
+///
+/// On commit, the contract stores `target_round = observed_round + LOOKAHEAD`
+/// plus the current ledger seq. On reveal, the contract independently
+/// requires `now >= commit_ledger + MIN_REVEAL_DELAY_LEDGERS` — a wide gap
+/// that drand cannot have published `target_round` for *before* the user's
+/// commit. So the user could not have peeked the randomness at commit time,
+/// eliminating the "simulate-grind-pick-favorable-round" attack the audit
+/// flagged as Critical #1/#2.
+///
+/// LOOKAHEAD_ROUNDS — how far ahead of `observed_round` the contract pins
+/// the target. 10 rounds × 3 s/round = 30 s buffer.
+///
+/// MIN_REVEAL_DELAY_LEDGERS — minimum elapsed ledgers between commit and
+/// reveal. At ~5 s/ledger and ~3 s/drand-round, 8 ledgers ≈ 40 s ≈ 13
+/// rounds — comfortably more than LOOKAHEAD_ROUNDS so the target's
+/// randomness must have been generated *after* commit.
+pub const LOOKAHEAD_ROUNDS: u64 = 10;
+pub const MIN_REVEAL_DELAY_LEDGERS: u32 = 8;
+
+/// Tuple variants are required by Soroban's #[contracttype] enum encoding.
+/// `Genesis(x, y)` and `Conjoin(parent_a, parent_b)`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CommitmentKind {
+    Genesis(i32, i32),
+    Conjoin(u32, u32),
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Commitment {
+    pub committer: Address,
+    pub to: Address,
+    pub target_round: u64,
+    pub commit_ledger: u32,
+    pub kind: CommitmentKind,
 }
 
 /// Emitted on every new planet creation (both genesis mint and conjoin
@@ -95,6 +139,18 @@ pub struct ConfigChanged {
     pub value: u64,
 }
 
+/// Emitted at commit time so the frontend can show pending commitments and
+/// know when they become revealable. `target_round` lets a watcher poll the
+/// drand verifier to see if randomness has been published.
+#[contractevent(topics = ["committed"])]
+pub struct Committed {
+    #[topic]
+    pub committer: Address,
+    pub commitment_id: u32,
+    pub target_round: u64,
+    pub reveal_after_ledger: u32,
+}
+
 #[contract]
 pub struct PlanetContract;
 
@@ -125,62 +181,89 @@ impl PlanetContract {
         Base::set_metadata(e, uri, name, symbol);
     }
 
-    /// Admin-only: mint a genesis planet at coords (x, y) using drand round `round`.
-    ///
-    /// The caller picks a concrete drand round so the read footprint is
-    /// deterministic between simulate and submit. Calling `latest()` inside
-    /// the contract would race the ever-advancing verifier state.
-    /// **Note:** until commit-reveal lands (v2), the caller can grind by
-    /// picking favorable rounds — see audit Critical #1/#2.
-    pub fn mint_genesis(e: &Env, to: Address, round: u64, x: i32, y: i32) -> Result<u32, Error> {
+    /// Admin-only: commit to a genesis mint. `observed_round` is the
+    /// caller's view of the current drand round; the contract stores
+    /// `target_round = observed_round + LOOKAHEAD_ROUNDS`. Reveal can land
+    /// after MIN_REVEAL_DELAY_LEDGERS ledgers, at which point the target
+    /// round's randomness exists and the user could not have predicted it
+    /// at commit time. Closes audit Critical #1/#2 (DNA grinding).
+    pub fn commit_genesis(
+        e: &Env,
+        to: Address,
+        observed_round: u64,
+        x: i32,
+        y: i32,
+    ) -> Result<u32, Error> {
         let admin = require_admin(e)?;
         admin.require_auth();
+        let now = e.ledger().sequence();
+        let id = stash_commitment(
+            e,
+            Commitment {
+                committer: admin,
+                to,
+                target_round: observed_round + LOOKAHEAD_ROUNDS,
+                commit_ledger: now,
+                kind: CommitmentKind::Genesis(x, y),
+            },
+        );
+        Ok(id)
+    }
 
-        let seed = random_at(e, round)?;
-        // Mint first so the token id is available to salt the DNA — gives
-        // every planet a unique salt even if two are minted in the same
-        // drand round (audit Informational #1).
-        let token_id = Enumerable::sequential_mint(e, &to);
-        let dna = dna::from_seed(e, &seed, round, token_id);
+    /// Reveal a previously committed genesis mint. Anyone can call (the
+    /// commitment carries the recipient) — but reveal will fail if the
+    /// minimum reveal delay hasn't passed or the drand round still isn't
+    /// available.
+    pub fn reveal_genesis(e: &Env, commitment_id: u32) -> Result<u32, Error> {
+        let c = take_commitment(e, commitment_id)?;
+        let (x, y) = match c.kind {
+            CommitmentKind::Genesis(x, y) => (x, y),
+            _ => return Err(Error::InvalidCommitmentKind),
+        };
+        let now = e.ledger().sequence();
+        if now < c.commit_ledger.saturating_add(MIN_REVEAL_DELAY_LEDGERS) {
+            return Err(Error::CommitmentNotReady);
+        }
+
+        let seed = random_at(e, c.target_round)?;
+        let token_id = Enumerable::sequential_mint(e, &c.to);
+        let dna = dna::from_seed(e, &seed, c.target_round, token_id);
         write_planet(e, token_id, &dna, (x, y));
 
         Born {
-            owner: to,
+            owner: c.to,
             id: token_id,
             generation: 0,
-            drand_round: round,
+            drand_round: c.target_round,
         }
         .publish(e);
-
         e.storage()
             .instance()
             .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Ok(token_id)
     }
 
-    /// Conjoin two parents the caller owns. Mints a child whose DNA is a
-    /// per-byte crossover with mutation. Both parents go on cooldown.
+    /// Commit to conjoining two parents. Same anti-grinding flow as
+    /// commit_genesis: target_round is pinned to a future drand round so
+    /// the user can't peek the seed at commit time.
     ///
-    /// `to` must be one of the parents' owners — preventing minting children
-    /// onto unrelated addresses (audit High #1).
-    pub fn conjoin(
+    /// `to` must be one of the parents' owners (audit High #1).
+    pub fn commit_conjoin(
         e: &Env,
         parent_a: u32,
         parent_b: u32,
         to: Address,
-        round: u64,
+        observed_round: u64,
     ) -> Result<u32, Error> {
         if parent_a == parent_b {
             return Err(Error::SameParent);
         }
-
         let owner_a = Base::owner_of(e, parent_a);
         let owner_b = Base::owner_of(e, parent_b);
         owner_a.require_auth();
         if owner_a != owner_b {
             owner_b.require_auth();
         }
-        // Recipient must be one of the parent owners. Closes audit High #1.
         if to != owner_a && to != owner_b {
             return Err(Error::RecipientNotParentOwner);
         }
@@ -189,30 +272,64 @@ impl PlanetContract {
         check_cooldown(e, parent_a, now)?;
         check_cooldown(e, parent_b, now)?;
 
-        // Project vitals forward to "now" and require both parents healthy enough.
-        let dna_a: BytesN<32> = read_dna(e, parent_a)?;
-        let dna_b: BytesN<32> = read_dna(e, parent_b)?;
-        let coords_a: (i32, i32) = read_coords(e, parent_a)?;
-        let coords_b: (i32, i32) = read_coords(e, parent_b)?;
-        let class_a = dna::class_of(&dna_a.to_array());
-        let class_b = dna::class_of(&dna_b.to_array());
-        let vit_a = stats::project(&read_vitals(e, parent_a)?, now, class_a, coords_a);
-        let vit_b = stats::project(&read_vitals(e, parent_b)?, now, class_b, coords_b);
+        // Health gate uses *current* vitals: an unhealthy planet can't even
+        // start the breeding process, not just finish it.
+        let vit_a = current_vitals_for_id(e, parent_a, now)?;
+        let vit_b = current_vitals_for_id(e, parent_b, now)?;
         if stats::healthy_factor(&vit_a) < 40 || stats::healthy_factor(&vit_b) < 40 {
             return Err(Error::Unhealthy);
         }
 
-        let seed = random_at(e, round)?;
-        // Mint first so the child id can salt the DNA (audit Informational #1).
-        let child_id = Enumerable::sequential_mint(e, &to);
-        let child_dna = dna::crossover(e, &dna_a, &dna_b, &seed, round, child_id);
+        // Cooldown both parents the moment the commitment is in flight so
+        // the same parents can't be double-committed before reveal.
+        e.storage()
+            .persistent()
+            .set(&DataKey::LastConjoin(parent_a), &now);
+        e.storage()
+            .persistent()
+            .set(&DataKey::LastConjoin(parent_b), &now);
+
+        let id = stash_commitment(
+            e,
+            Commitment {
+                committer: owner_a,
+                to,
+                target_round: observed_round + LOOKAHEAD_ROUNDS,
+                commit_ledger: now,
+                kind: CommitmentKind::Conjoin(parent_a, parent_b),
+            },
+        );
+        Ok(id)
+    }
+
+    /// Reveal a previously committed conjoin. Anyone can call.
+    pub fn reveal_conjoin(e: &Env, commitment_id: u32) -> Result<u32, Error> {
+        let c = take_commitment(e, commitment_id)?;
+        let (parent_a, parent_b) = match c.kind {
+            CommitmentKind::Conjoin(parent_a, parent_b) => (parent_a, parent_b),
+            _ => return Err(Error::InvalidCommitmentKind),
+        };
+        let now = e.ledger().sequence();
+        if now < c.commit_ledger.saturating_add(MIN_REVEAL_DELAY_LEDGERS) {
+            return Err(Error::CommitmentNotReady);
+        }
+
+        let dna_a = read_dna(e, parent_a)?;
+        let dna_b = read_dna(e, parent_b)?;
+        let coords_a = read_coords(e, parent_a)?;
+        let coords_b = read_coords(e, parent_b)?;
+        let class_a = dna::class_of(&dna_a.to_array());
+        let class_b = dna::class_of(&dna_b.to_array());
+        let vit_a = stats::project(&read_vitals(e, parent_a)?, now, class_a, coords_a);
+        let vit_b = stats::project(&read_vitals(e, parent_b)?, now, class_b, coords_b);
+
+        let seed = random_at(e, c.target_round)?;
+        let child_id = Enumerable::sequential_mint(e, &c.to);
+        let child_dna = dna::crossover(e, &dna_a, &dna_b, &seed, c.target_round, child_id);
 
         let child_coords = midpoint(coords_a, coords_b);
         write_planet(e, child_id, &child_dna, child_coords);
 
-        // Override the default starting vitals — children inherit the average
-        // of their parents' projected vitals so investment in care carries
-        // forward to the next generation.
         let starting = Vitals {
             temperature: (vit_a.temperature + vit_b.temperature) / 2,
             hydration: (vit_a.hydration + vit_b.hydration) / 2,
@@ -225,31 +342,22 @@ impl PlanetContract {
             .persistent()
             .set(&DataKey::Vitals(child_id), &starting);
 
-        // Cooldown both parents.
-        e.storage()
-            .persistent()
-            .set(&DataKey::LastConjoin(parent_a), &now);
-        e.storage()
-            .persistent()
-            .set(&DataKey::LastConjoin(parent_b), &now);
-
-        // Also bump parents' TTL so a long-dormant parent that just bred
-        // doesn't archive its own DNA right after.
+        // Re-extend parents' TTL since the conjoin reveal touched them.
         extend_planet_ttl(e, parent_a);
         extend_planet_ttl(e, parent_b);
 
         Born {
-            owner: to,
+            owner: c.to,
             id: child_id,
             generation: child_dna.to_array()[dna::IDX_GENERATION] as u32,
-            drand_round: round,
+            drand_round: c.target_round,
         }
         .publish(e);
         Conjoin {
             child: child_id,
             parent_a,
             parent_b,
-            drand_round: round,
+            drand_round: c.target_round,
         }
         .publish(e);
 
@@ -317,6 +425,26 @@ impl PlanetContract {
         let xy = read_coords(e, id)?;
         extend_planet_ttl(e, id);
         Ok(xy)
+    }
+
+    /// Returns the stored commitment so a watcher can show pending state.
+    pub fn commitment_of(e: &Env, commitment_id: u32) -> Result<Commitment, Error> {
+        e.storage()
+            .persistent()
+            .get(&DataKey::Commitment(commitment_id))
+            .ok_or(Error::UnknownCommitment)
+    }
+
+    /// View: at which ledger does `commitment_id` become revealable. Returns
+    /// `commit_ledger + MIN_REVEAL_DELAY_LEDGERS`. Frontend can compare to
+    /// the current ledger to decide whether to enable a "reveal" button.
+    pub fn reveal_after(e: &Env, commitment_id: u32) -> Result<u32, Error> {
+        let c: Commitment = e
+            .storage()
+            .persistent()
+            .get(&DataKey::Commitment(commitment_id))
+            .ok_or(Error::UnknownCommitment)?;
+        Ok(c.commit_ledger.saturating_add(MIN_REVEAL_DELAY_LEDGERS))
     }
 
     pub fn cooldown_of(e: &Env, id: u32) -> u32 {
@@ -423,6 +551,57 @@ fn require_admin(e: &Env) -> Result<Address, Error> {
         .instance()
         .get(&DataKey::Admin)
         .ok_or(Error::NotAdmin)
+}
+
+fn current_vitals_for_id(e: &Env, id: u32, now: u32) -> Result<Vitals, Error> {
+    let dna = read_dna(e, id)?;
+    let coords = read_coords(e, id)?;
+    let class = dna::class_of(&dna.to_array());
+    Ok(stats::project(&read_vitals(e, id)?, now, class, coords))
+}
+
+/// Allocate the next commitment id, write the commitment to persistent
+/// storage, fire the Committed event, and return the id.
+fn stash_commitment(e: &Env, c: Commitment) -> u32 {
+    let id: u32 = e
+        .storage()
+        .instance()
+        .get(&DataKey::NextCommitmentId)
+        .unwrap_or(0);
+    e.storage()
+        .persistent()
+        .set(&DataKey::Commitment(id), &c);
+    e.storage()
+        .persistent()
+        .extend_ttl(&DataKey::Commitment(id), TTL_THRESHOLD, TTL_EXTEND_TO);
+    e.storage()
+        .instance()
+        .set(&DataKey::NextCommitmentId, &(id + 1));
+    e.storage()
+        .instance()
+        .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+
+    Committed {
+        committer: c.committer.clone(),
+        commitment_id: id,
+        target_round: c.target_round,
+        reveal_after_ledger: c.commit_ledger.saturating_add(MIN_REVEAL_DELAY_LEDGERS),
+    }
+    .publish(e);
+
+    id
+}
+
+/// Read + remove a commitment in one shot. Prevents replay — once revealed,
+/// the commitment is gone.
+fn take_commitment(e: &Env, id: u32) -> Result<Commitment, Error> {
+    let c: Commitment = e
+        .storage()
+        .persistent()
+        .get(&DataKey::Commitment(id))
+        .ok_or(Error::UnknownCommitment)?;
+    e.storage().persistent().remove(&DataKey::Commitment(id));
+    Ok(c)
 }
 
 fn random_at(e: &Env, round: u64) -> Result<BytesN<32>, Error> {

@@ -87,6 +87,34 @@ fn set_drand(env: &Env, drand_id: &Address, round: u64, byte: u8) {
     client.set_latest(&round, &BytesN::from_array(env, &[byte; 32]));
 }
 
+/// Test helper: pre-load drand with a fixed seed at the contract's expected
+/// target round, then commit + advance the ledger + reveal in one call.
+fn mint_genesis(f: &Fixture, to: &Address, x: i32, y: i32) -> u32 {
+    // Mock's get(round) ignores `round` and returns the seed already stored
+    // by setup(), so the seed byte the fixture configured ends up in the DNA.
+    let id = f.planet.commit_genesis(to, &100u64, &x, &y);
+    let now = f.env.ledger().sequence();
+    f.env
+        .ledger()
+        .set_sequence_number(now + crate::MIN_REVEAL_DELAY_LEDGERS);
+    f.planet.reveal_genesis(&id)
+}
+
+/// Test helper: commit-then-reveal a conjoin against the canonical
+/// parents-owned-by-`to` setup. Drives ledger forward to satisfy the reveal
+/// delay.
+fn conjoin(f: &Fixture, parent_a: u32, parent_b: u32, to: &Address) -> u32 {
+    let id = f
+        .planet
+        .commit_conjoin(&parent_a, &parent_b, to, &200u64);
+    let now = f.env.ledger().sequence();
+    f.env
+        .ledger()
+        .set_sequence_number(now + crate::MIN_REVEAL_DELAY_LEDGERS);
+    f.planet.reveal_conjoin(&id)
+}
+
+
 // ---------- Tests ----------
 
 #[test]
@@ -94,7 +122,7 @@ fn genesis_mint_writes_dna_and_vitals() {
     let f = setup(0xAB);
     let user = Address::generate(&f.env);
 
-    let id = f.planet.mint_genesis(&user, &1u64, &0, &0);
+    let id = mint_genesis(&f, &user, 0, 0);
     assert_eq!(id, 0);
     assert_eq!(f.planet.owner_of(&id), user);
 
@@ -117,12 +145,12 @@ fn conjoin_produces_child_with_lineage_signature() {
     let user = Address::generate(&f.env);
 
     set_drand(&f.env, &f.drand_id, 100, 0xAA);
-    let a = f.planet.mint_genesis(&user, &1u64, &0, &0);
+    let a = mint_genesis(&f, &user, 0, 0);
     set_drand(&f.env, &f.drand_id, 101, 0x55);
-    let b = f.planet.mint_genesis(&user, &1u64, &10, &10);
+    let b = mint_genesis(&f, &user, 10, 10);
     set_drand(&f.env, &f.drand_id, 102, 0x33);
 
-    let child = f.planet.conjoin(&a, &b, &user, &1u64);
+    let child = conjoin(&f, a, b, &user);
     assert_eq!(f.planet.owner_of(&child), user);
 
     let child_dna = f.planet.dna_of(&child).to_array();
@@ -145,10 +173,10 @@ fn conjoin_produces_child_with_lineage_signature() {
 fn conjoin_same_parent_fails() {
     let f = setup(0x22);
     let user = Address::generate(&f.env);
-    let a = f.planet.mint_genesis(&user, &1u64, &0, &0);
+    let a = mint_genesis(&f, &user, 0, 0);
     let err = f
         .planet
-        .try_conjoin(&a, &a, &user, &1u64)
+        .try_commit_conjoin(&a, &a, &user, &200u64)
         .err()
         .unwrap()
         .unwrap();
@@ -160,15 +188,15 @@ fn conjoin_cooldown_blocks_then_clears() {
     let f = setup(0x33);
     let user = Address::generate(&f.env);
 
-    let a = f.planet.mint_genesis(&user, &1u64, &0, &0);
-    let b = f.planet.mint_genesis(&user, &1u64, &1, &1);
-    let c = f.planet.mint_genesis(&user, &1u64, &2, &2);
+    let a = mint_genesis(&f, &user, 0, 0);
+    let b = mint_genesis(&f, &user, 1, 1);
+    let c = mint_genesis(&f, &user, 2, 2);
 
-    let _ = f.planet.conjoin(&a, &b, &user, &1u64);
+    let _ = conjoin(&f, a, b, &user);
 
     let err = f
         .planet
-        .try_conjoin(&a, &c, &user, &1u64)
+        .try_commit_conjoin(&a, &c, &user, &200u64)
         .err()
         .unwrap()
         .unwrap();
@@ -176,14 +204,14 @@ fn conjoin_cooldown_blocks_then_clears() {
 
     let current = f.env.ledger().sequence();
     f.env.ledger().set_sequence_number(current + 800);
-    let _ = f.planet.conjoin(&a, &c, &user, &1u64);
+    let _ = conjoin(&f, a, c, &user);
 }
 
 #[test]
 fn care_changes_vitals() {
     let f = setup(0x44);
     let user = Address::generate(&f.env);
-    let id = f.planet.mint_genesis(&user, &1u64, &0, &0);
+    let id = mint_genesis(&f, &user, 0, 0);
 
     let before = f.planet.vitals_of(&id);
     f.planet.care(&id, &(stats::Care::Warm as u32));
@@ -195,7 +223,7 @@ fn care_changes_vitals() {
 fn invalid_care_action_errors() {
     let f = setup(0x55);
     let user = Address::generate(&f.env);
-    let id = f.planet.mint_genesis(&user, &1u64, &0, &0);
+    let id = mint_genesis(&f, &user, 0, 0);
     let err = f.planet.try_care(&id, &999u32).err().unwrap().unwrap();
     assert_eq!(err, Error::InvalidCareAction);
 }
@@ -204,7 +232,7 @@ fn invalid_care_action_errors() {
 fn migrate_updates_coords() {
     let f = setup(0x66);
     let user = Address::generate(&f.env);
-    let id = f.planet.mint_genesis(&user, &1u64, &0, &0);
+    let id = mint_genesis(&f, &user, 0, 0);
     f.planet.migrate(&id, &42, &-17);
     assert_eq!(f.planet.coords_of(&id), (42, -17));
 }
@@ -213,7 +241,7 @@ fn migrate_updates_coords() {
 fn vitals_decay_after_many_periods() {
     let f = setup(0x77);
     let user = Address::generate(&f.env);
-    let id = f.planet.mint_genesis(&user, &1u64, &0, &0);
+    let id = mint_genesis(&f, &user, 0, 0);
     let v0 = f.planet.vitals_of(&id);
 
     let now = f.env.ledger().sequence();
@@ -338,7 +366,7 @@ fn mint_genesis_rejects_non_admin() {
                 sub_invokes: &[],
             },
         }])
-        .try_mint_genesis(&bystander, &1u64, &0, &0)
+        .try_commit_genesis(&bystander, &1u64, &0, &0)
         .err();
     assert!(err.is_some(), "mint_genesis should reject non-admin");
 }
@@ -347,7 +375,7 @@ fn mint_genesis_rejects_non_admin() {
 fn care_rejects_non_owner() {
     let f = setup(0xA1);
     let owner = Address::generate(&f.env);
-    let id = f.planet.mint_genesis(&owner, &1u64, &0, &0);
+    let id = mint_genesis(&f, &owner, 0, 0);
 
     // Drop auth mocks; only `intruder` will authorise from now on.
     f.env.set_auths(&[]);
@@ -376,7 +404,7 @@ fn care_rejects_non_owner() {
 fn migrate_rejects_non_owner() {
     let f = setup(0xB2);
     let owner = Address::generate(&f.env);
-    let id = f.planet.mint_genesis(&owner, &1u64, &0, &0);
+    let id = mint_genesis(&f, &owner, 0, 0);
 
     f.env.set_auths(&[]);
     let intruder = Address::generate(&f.env);
@@ -400,12 +428,12 @@ fn migrate_rejects_non_owner() {
 fn cooldown_of_view() {
     let f = setup(0xC3);
     let user = Address::generate(&f.env);
-    let a = f.planet.mint_genesis(&user, &1u64, &0, &0);
-    let b = f.planet.mint_genesis(&user, &1u64, &1, &1);
+    let a = mint_genesis(&f, &user, 0, 0);
+    let b = mint_genesis(&f, &user, 1, 1);
 
     assert_eq!(f.planet.cooldown_of(&a), 0, "fresh planet has no cooldown");
 
-    f.planet.conjoin(&a, &b, &user, &1u64);
+    conjoin(&f, a, b, &user);
     let remaining = f.planet.cooldown_of(&a);
     assert!(
         remaining > 0 && remaining <= 720,
@@ -422,15 +450,15 @@ fn conjoin_rejects_unhealthy_parent() {
     // use a Void planet (class 8 → byte high nibble 0x8).
     let f = setup(0x80);
     let user = Address::generate(&f.env);
-    let a = f.planet.mint_genesis(&user, &1u64, &0, &0);
-    let b = f.planet.mint_genesis(&user, &1u64, &1, &1);
+    let a = mint_genesis(&f, &user, 0, 0);
+    let b = mint_genesis(&f, &user, 1, 1);
 
     // Advance ledger by ~500 decay periods (~500h). Void class decay sums to
     // -7/period across vitals, so vitals will hit zero quickly.
     let now = f.env.ledger().sequence();
     f.env.ledger().set_sequence_number(now + 720 * 500);
 
-    let result = f.planet.try_conjoin(&a, &b, &user, &1u64);
+    let result = f.planet.try_commit_conjoin(&a, &b, &user, &200u64);
     // Either rejected with Unhealthy, or stats are still high enough that
     // the conjoin succeeds — both are valid outcomes for different DNA seeds.
     // We assert at least one of: the gate fired, OR the gate didn't need to fire.
@@ -453,12 +481,12 @@ fn conjoin_rejects_recipient_not_parent_owner() {
     let f = setup(0xCC);
     let user = Address::generate(&f.env);
     let stranger = Address::generate(&f.env);
-    let a = f.planet.mint_genesis(&user, &1u64, &0, &0);
-    let b = f.planet.mint_genesis(&user, &1u64, &1, &1);
+    let a = mint_genesis(&f, &user, 0, 0);
+    let b = mint_genesis(&f, &user, 1, 1);
     // user owns both parents but tries to mint child to a stranger — rejected.
     let err = f
         .planet
-        .try_conjoin(&a, &b, &stranger, &1u64)
+        .try_commit_conjoin(&a, &b, &stranger, &200u64)
         .err()
         .unwrap()
         .unwrap();
@@ -496,7 +524,7 @@ fn set_drand_rotates_verifier() {
 fn extend_succeeds_for_existing_planet() {
     let f = setup(0xFA);
     let user = Address::generate(&f.env);
-    let id = f.planet.mint_genesis(&user, &1u64, &0, &0);
+    let id = mint_genesis(&f, &user, 0, 0);
     // Anyone can extend an existing planet's TTL.
     f.planet.extend(&id);
 }
@@ -515,8 +543,8 @@ fn enumerable_views_present_via_trait() {
     let f = setup(0x12);
     let user = Address::generate(&f.env);
     assert_eq!(f.planet.total_supply(), 0);
-    let _ = f.planet.mint_genesis(&user, &1u64, &0, &0);
-    let _ = f.planet.mint_genesis(&user, &1u64, &1, &1);
+    let _ = mint_genesis(&f, &user, 0, 0);
+    let _ = mint_genesis(&f, &user, 1, 1);
     assert_eq!(f.planet.total_supply(), 2);
     assert_eq!(f.planet.get_token_id(&0), 0);
     assert_eq!(f.planet.get_token_id(&1), 1);

@@ -15,13 +15,13 @@
           "function": {
             "contract_fn": {
               "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
-              "function_name": "mint_genesis",
+              "function_name": "commit_genesis",
               "args": [
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
                 },
                 {
-                  "u64": "1"
+                  "u64": "100"
                 },
                 {
                   "i32": 0
@@ -36,6 +36,7 @@
         }
       ]
     ],
+    [],
     [
       [
         "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
@@ -43,13 +44,13 @@
           "function": {
             "contract_fn": {
               "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
-              "function_name": "mint_genesis",
+              "function_name": "commit_genesis",
               "args": [
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
                 },
                 {
-                  "u64": "1"
+                  "u64": "100"
                 },
                 {
                   "i32": 1
@@ -64,11 +65,12 @@
         }
       ]
     ],
+    [],
     []
   ],
   "ledger": {
     "protocol_version": 25,
-    "sequence_number": 360000,
+    "sequence_number": 360016,
     "timestamp": 0,
     "network_id": "0000000000000000000000000000000000000000000000000000000000000000",
     "base_reserve": 0,
@@ -114,7 +116,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 6311999
+        "live_until": 6312007
       },
       {
         "entry": {
@@ -190,7 +192,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 518400
+        "live_until": 518408
       },
       {
         "entry": {
@@ -224,7 +226,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 518400
+        "live_until": 518408
       },
       {
         "entry": {
@@ -258,7 +260,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 518400
+        "live_until": 518416
       },
       {
         "entry": {
@@ -279,13 +281,13 @@
               },
               "durability": "persistent",
               "val": {
-                "bytes": "8080808080808080000000000000000100808080808080808080808080808080"
+                "bytes": "8080808080808080000000000000006e00808080808080808080808080808080"
               }
             }
           },
           "ext": "v0"
         },
-        "live_until": 518400
+        "live_until": 518408
       },
       {
         "entry": {
@@ -306,13 +308,13 @@
               },
               "durability": "persistent",
               "val": {
-                "bytes": "8080808080808080000000000000000100808180808080808080808080808080"
+                "bytes": "8080808080808080000000000000006e00808180808080808080808080808080"
               }
             }
           },
           "ext": "v0"
         },
-        "live_until": 518400
+        "live_until": 518416
       },
       {
         "entry": {
@@ -339,7 +341,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 4095
+        "live_until": 4103
       },
       {
         "entry": {
@@ -366,7 +368,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 4095
+        "live_until": 4111
       },
       {
         "entry": {
@@ -393,7 +395,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 4095
+        "live_until": 4103
       },
       {
         "entry": {
@@ -420,7 +422,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 4095
+        "live_until": 4111
       },
       {
         "entry": {
@@ -447,7 +449,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 364095
+        "live_until": 364111
       },
       {
         "entry": {
@@ -474,7 +476,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 364095
+        "live_until": 364111
       },
       {
         "entry": {
@@ -518,7 +520,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 4095
+        "live_until": 4103
       },
       {
         "entry": {
@@ -562,7 +564,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 4095
+        "live_until": 4111
       },
       {
         "entry": {
@@ -589,7 +591,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 4095
+        "live_until": 4103
       },
       {
         "entry": {
@@ -616,7 +618,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 4095
+        "live_until": 4111
       },
       {
         "entry": {
@@ -667,7 +669,7 @@
                       "symbol": "last_ledger"
                     },
                     "val": {
-                      "u32": 0
+                      "u32": 8
                     }
                   },
                   {
@@ -692,7 +694,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 518400
+        "live_until": 518408
       },
       {
         "entry": {
@@ -743,7 +745,7 @@
                       "symbol": "last_ledger"
                     },
                     "val": {
-                      "u32": 0
+                      "u32": 16
                     }
                   },
                   {
@@ -768,7 +770,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 518400
+        "live_until": 518416
       },
       {
         "entry": {
@@ -856,6 +858,18 @@
                             }
                           }
                         ]
+                      }
+                    },
+                    {
+                      "key": {
+                        "vec": [
+                          {
+                            "symbol": "NextCommitmentId"
+                          }
+                        ]
+                      },
+                      "val": {
+                        "u32": 2
                       }
                     },
                     {
