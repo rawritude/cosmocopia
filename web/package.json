@@ -9,9 +9,11 @@
   },
   "dependencies": {
     "@cosmocopia/art": "*",
+    "@creit-tech/stellar-wallets-kit": "npm:@jsr/creit-tech__stellar-wallets-kit@^2.2.0",
     "next": "^15.0.4",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "smart-account-kit": "^0.2.3"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

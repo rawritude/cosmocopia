@@ -83,3 +83,79 @@ button.secondary {
 
 .note { color: var(--dim); font-size: 13px; line-height: 1.6; }
 .note code { background: rgba(255,255,255,0.06); padding: 2px 6px; border-radius: 4px; }
+
+/* wallet chip in header */
+.walletChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 999px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 12px;
+}
+.walletChip .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #5eff9e;
+  box-shadow: 0 0 10px #5eff9e;
+}
+.walletChip .walletLabel { color: var(--dim); }
+.walletChip button { margin: 0; padding: 4px 10px; font-size: 11px; }
+
+/* connect modal */
+.modalScrim {
+  position: fixed; inset: 0;
+  background: rgba(5,6,14,0.7);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 50;
+  backdrop-filter: blur(4px);
+}
+.modal {
+  width: min(520px, 92vw);
+  background: var(--panel);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 16px;
+  padding: 24px;
+}
+.modal h3 { margin: 0 0 6px; font-size: 22px; }
+.modal .option {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  text-align: left;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  color: var(--ink);
+  padding: 16px;
+  border-radius: 12px;
+  margin-top: 12px;
+  cursor: pointer;
+}
+.modal .option:hover {
+  background: rgba(176,106,255,0.10);
+  border-color: rgba(176,106,255,0.35);
+}
+.modal .optTitle { font-size: 16px; font-weight: 600; }
+.modal .optDesc  { font-size: 13px; color: var(--dim); }
+.modal .kbd {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  background: rgba(0,0,0,0.4);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+.errBox {
+  margin-top: 12px;
+  background: rgba(255,80,80,0.10);
+  border: 1px solid rgba(255,80,80,0.30);
+  color: #ffb3b3;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  word-break: break-word;
+}

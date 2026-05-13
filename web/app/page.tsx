@@ -3,6 +3,8 @@
 import { useState, useMemo } from 'react';
 import PlanetSprite from '../components/PlanetSprite';
 import Traits from '../components/Traits';
+import ConnectButton from '../components/ConnectButton';
+import { WalletProvider, useWallet } from '../lib/wallet-context';
 import { dnaToHex } from '@cosmocopia/art';
 
 function randomDna(): Uint8Array {
@@ -32,20 +34,55 @@ const SHOWCASE_HEX = [
 ];
 
 export default function Page() {
+  return (
+    <WalletProvider>
+      <PageInner />
+    </WalletProvider>
+  );
+}
+
+function PageInner() {
   const [hex, setHex] = useState(SHOWCASE_HEX[0]);
   const dna = useMemo(() => parseHex(hex), [hex]);
+  const { state } = useWallet();
+  const ownedShowcase = state.status === 'connected'
+    ? SHOWCASE_HEX.slice(0, 3)
+    : [];
 
   return (
     <main className="page">
       <div className="hero">
         <h1>cosmocopia</h1>
         <span className="tag">tiny pixel worlds, on stellar (mvp scaffold)</span>
+        <span style={{ marginLeft: 'auto' }}><ConnectButton /></span>
       </div>
       <p className="sub">
         Each planet is a 32-byte DNA string rendered programmatically.
         Conjoin two and the child inherits a per-byte crossover of their genes,
         with mutations driven by drand-verified randomness.
       </p>
+
+      {ownedShowcase.length > 0 && (
+        <div className="panel" style={{ marginBottom: 24 }}>
+          <h2>your cosmocopia</h2>
+          <p className="note">
+            Connected as <code>{state.status === 'connected' ? state.address : ''}</code>
+            &nbsp;·&nbsp; <em>previewing three planets attributed to this address — real
+            ownership wiring lands once the planet contract is deployed.</em>
+          </p>
+          <div className="gallery">
+            {ownedShowcase.map((h) => {
+              const d = parseHex(h)!;
+              return (
+                <div key={`owned-${h}`} className="card">
+                  <PlanetSprite dna={d} scale={3} />
+                  <div className="name">{h.slice(0, 12)}…</div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       <div className="row" style={{ marginBottom: 32 }}>
         <div className="panel" style={{ flex: '0 0 auto' }}>
@@ -85,10 +122,9 @@ export default function Page() {
         })}
       </div>
 
-      <h2 style={{ marginTop: 40 }}>what's next</h2>
+      <h2 style={{ marginTop: 40 }}>what&apos;s next</h2>
       <ul className="note">
-        <li>Wire up <code>@stellar/stellar-sdk</code> + Stellar Wallets Kit for Freighter login.</li>
-        <li>Bind the deployed planet contract via <code>stellar contract bindings typescript</code>.</li>
+        <li>Bind the deployed planet contract via <code>stellar contract bindings typescript</code> and wire <code>mint_genesis</code> / <code>conjoin</code> / <code>care</code> to either signer (smart account or classic wallet).</li>
         <li>Galaxy map: a scrollable canvas at <code>(x, y)</code> coords with sector colouring.</li>
         <li>Conjunction page: pick two parents, preview speculative child art from a tentative drand round.</li>
         <li>Stat-aware art overlays (sickly haze when vitals fall outside the healthy band).</li>
