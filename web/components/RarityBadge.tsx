@@ -20,13 +20,20 @@ export default function RarityBadge({ dna, coords, size = 'sm' }: RarityBadgePro
         // Color is set inline so it survives PNG screenshots etc.
         color,
         borderColor: color,
-        boxShadow: `0 0 12px ${alpha(color, 0.35)}`,
+        boxShadow: tierGlow(color),
       }}
       title={tooltip}
     >
       {rarity.tier}
     </span>
   );
+}
+
+/// Tier glow shape matches --glow-primary / --glow-conjoin in globals.css,
+/// just parameterized by the per-tier color so we don't need a CSS var per
+/// tier.
+export function tierGlow(color: string): string {
+  return `0 0 12px ${alpha(color, 0.35)}`;
 }
 
 function buildTooltip(

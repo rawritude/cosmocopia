@@ -37,6 +37,19 @@ export default function GalaxyMap() {
   // Cache rendered planet sprites so we redraw cheaply.
   const spriteCache = useRef<Map<number, HTMLCanvasElement>>(new Map());
 
+  // Wait for the web-loaded display font (JetBrains Mono) to be ready before
+  // first paint, otherwise the canvas falls back to a system mono and the
+  // labels render in the wrong typography. Re-runs the render effect once
+  // fonts are ready.
+  const [fontsReady, setFontsReady] = useState(false);
+  useEffect(() => {
+    if (typeof document === 'undefined' || !document.fonts?.ready) {
+      setFontsReady(true);
+      return;
+    }
+    document.fonts.ready.then(() => setFontsReady(true));
+  }, []);
+
   // Load planets on mount.
   useEffect(() => {
     let cancelled = false;
@@ -96,8 +109,15 @@ export default function GalaxyMap() {
     const w2sX = (x: number) => x * view.zoom + ox;
     const w2sY = (y: number) => y * view.zoom + oy;
 
+    // Resolve design-system colors from the page so we don't drift when
+    // tokens change. Canvas can't read CSS vars directly.
+    const rootStyle = getComputedStyle(document.documentElement);
+    const VOID = (rootStyle.getPropertyValue('--void').trim() || '#0a0b0e');
+    const VOID_DEEP = (rootStyle.getPropertyValue('--void-deep').trim() || '#050507');
+    const CONJOIN = (rootStyle.getPropertyValue('--conjoin').trim() || '#ff85c4');
+
     // Background.
-    ctx.fillStyle = '#0a0b1a';
+    ctx.fillStyle = VOID;
     ctx.fillRect(0, 0, cssW, cssH);
 
     // Starfield.
@@ -132,12 +152,13 @@ export default function GalaxyMap() {
       const lx = w2sX(0) + Math.cos(angle) * r;
       const ly = w2sY(0) + Math.sin(angle) * r;
       const text = s.name.toLowerCase();
-      ctx.font = '11px ui-monospace, monospace';
+      ctx.font = "11px 'JetBrains Mono', ui-monospace, monospace";
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       const m = ctx.measureText(text);
-      // Dark backdrop for legibility against starfield.
-      ctx.fillStyle = 'rgba(10,11,26,0.88)';
+      // Dark backdrop for legibility against starfield — derived from --void
+      // so the panel matches the page's true background.
+      ctx.fillStyle = hexToRgba(VOID_DEEP, 0.88);
       ctx.fillRect(lx - m.width / 2 - 4, ly - 8, m.width + 8, 16);
       ctx.fillStyle = hexToRgba(s.color, 0.9);
       ctx.fillText(text, lx, ly);
@@ -163,19 +184,19 @@ export default function GalaxyMap() {
         if (isSel) {
           ctx.beginPath();
           ctx.arc(px, py, size * 0.65, 0, Math.PI * 2);
-          ctx.strokeStyle = '#ff85c4';
+          ctx.strokeStyle = CONJOIN;
           ctx.lineWidth = 2;
           ctx.stroke();
         }
         ctx.drawImage(sprite, px - size / 2, py - size / 2, size, size);
         // Id label.
         ctx.fillStyle = 'rgba(255,255,255,0.5)';
-        ctx.font = '10px ui-monospace, monospace';
+        ctx.font = "10px 'JetBrains Mono', ui-monospace, monospace";
         ctx.textAlign = 'center';
         ctx.fillText(`#${p.id}`, px, py + size / 2 + 12);
       }
     }
-  }, [planets, view, hover, selected]);
+  }, [planets, view, hover, selected, fontsReady]);
 
   // Mouse handlers — pan, zoom, hover/click.
   function s2w(canvasX: number, canvasY: number) {
@@ -211,7 +232,7 @@ export default function GalaxyMap() {
         {!planets && !err && <p className="note">scanning the deployed contract for planets…</p>}
         <canvas
           ref={canvasRef}
-          style={{ width: '100%', aspectRatio: '4 / 3', display: 'block', borderRadius: 8, cursor: dragRef.current ? 'grabbing' : 'grab', touchAction: 'none' }}
+          style={{ width: '100%', aspectRatio: '4 / 3', display: 'block', cursor: dragRef.current ? 'grabbing' : 'grab', touchAction: 'none' }}
           onMouseDown={(e) => {
             const rect = e.currentTarget.getBoundingClientRect();
             dragRef.current = {
@@ -288,7 +309,7 @@ export default function GalaxyMap() {
                 <span
                   style={{
                     color: 'var(--lumen)',
-                    marginLeft: 22,
+                    marginLeft: 'var(--space-5)',
                     fontSize: 11,
                     fontFamily: 'var(--font-sans)',
                   }}

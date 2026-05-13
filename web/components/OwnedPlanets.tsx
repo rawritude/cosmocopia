@@ -64,8 +64,8 @@ export default function OwnedPlanets() {
   if (!effectiveAddress) return null;
 
   return (
-    <div className="panel" style={{ marginBottom: 24 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+    <div className="panel" style={{ marginBottom: 'var(--space-6)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', flexWrap: 'wrap' }}>
         <h2 style={{ margin: 0 }}>
           {isReadOnly ? 'preview' : 'your cosmocopia'}
         </h2>
@@ -243,40 +243,12 @@ function Vital({ label, v }: { label: string; v: number }) {
   const pct = Math.max(0, Math.min(100, (v / 255) * 100));
   const colour = v < 40 || v > 220 ? 'var(--mars)' : v < 100 ? 'var(--solar)' : 'var(--auroral)';
   return (
-    <div
-      style={{
-        display: 'grid',
-        gridTemplateColumns: '20px 1fr 32px',
-        alignItems: 'center',
-        gap: 8,
-        fontSize: 11,
-        fontFamily: 'var(--font-mono)',
-        marginTop: 4,
-      }}
-    >
-      <span style={{ lineHeight: 1, fontSize: 12 }}>{label}</span>
-      <div
-        style={{
-          background: 'var(--pitch)',
-          height: 10,
-          border: '1px solid var(--pitch)',
-          outline: '1px solid var(--hairline)',
-          outlineOffset: -2,
-          overflow: 'hidden',
-        }}
-      >
-        <div style={{ width: `${pct}%`, height: '100%', background: colour }} />
+    <div className="vitalRow">
+      <span className="vitalIcon">{label}</span>
+      <div className="vitalTrack">
+        <div className="vitalFill" style={{ width: `${pct}%`, background: colour }} />
       </div>
-      <span
-        style={{
-          textAlign: 'right',
-          color: 'var(--stardust)',
-          fontFamily: 'var(--font-mono)',
-          fontWeight: 600,
-        }}
-      >
-        {v}
-      </span>
+      <span className="vitalValue">{v}</span>
     </div>
   );
 }
