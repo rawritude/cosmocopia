@@ -4,7 +4,7 @@
 
 ![Cosmocopia](docs/screenshot.png)
 
-*Live read from the testnet contract — the top "preview" row shows five planets owned by the deployer: tokens 0–3 are the genesis batch minted via Drand-Relay verified randomness, and #4 is the child born from conjoining tokens 0 and 1. Per-card vitals bars come from `vitals_of` on chain. Below that, the tinker panel renders any 32-byte DNA you paste, and the genesis gallery shows fixed-seed showcase planets that span the class space.*
+*Live read from the testnet contract — the top "preview" row shows four planets minted via the **commit-reveal flow** on testnet. Per-card vitals bars come from `vitals_of` on chain. Below that, the tinker panel renders any 32-byte DNA you paste, and the genesis gallery shows fixed-seed showcase planets that span the class space.*
 
 Cosmocopia is an Axie-style collection-of-creatures project, but instead of monsters they are **planets**: each a 96×96 pixel art world programmatically rendered from on-chain DNA, born from drand-verified randomness on Stellar/Soroban.
 
@@ -111,11 +111,29 @@ cosmocopia/
 
 ## External dependencies
 
-- **Drand-Relay** ([kaankacar/Drand-Relay](https://github.com/kaankacar/Drand-Relay)) — testnet verifier `CAESC7SC5EW5P2P3IM5Q7E64ZNDATVSN5F57NTCH5E7GJRPDM76KF7QM`. We call `latest()` for mints and conjunctions; commit-reveal scheduled for v2.
+- **Drand-Relay** ([kaankacar/Drand-Relay](https://github.com/kaankacar/Drand-Relay)) — testnet verifier `CAESC7SC5EW5P2P3IM5Q7E64ZNDATVSN5F57NTCH5E7GJRPDM76KF7QM`. Used as the source of fair, externally-verifiable randomness for every mint and conjunction.
 - **OpenZeppelin stellar-contracts** ([repo](https://github.com/OpenZeppelin/stellar-contracts)) — `stellar-tokens::non_fungible` for the NFT base, `stellar-access::ownable` for admin gating, `stellar-macros` for `#[only_owner]`.
 - **OpenZeppelin Contracts Wizard** — used to seed the initial NFT shell (Stellar tab on wizard.openzeppelin.com or the `@openzeppelin/wizard-stellar` npm package).
 - **Smart Account Kit** ([kalepail/smart-account-kit](https://github.com/kalepail/smart-account-kit), published on npm as `smart-account-kit`) — passkey-based smart wallets. Testnet WASM hash `8537b8166c0078440a5324c12f6db48d6340d157c306a54c5ea81405abcc2611`, WebAuthn verifier `CCMR63YE5T7MPWREF3PC5XNTTGXFSB4GYUGUIT5POHP2UGCS65TBIUUU`.
 - **Stellar Wallets Kit** ([Creit-Tech/Stellar-Wallets-Kit](https://github.com/Creit-Tech/Stellar-Wallets-Kit), JSR package `@creit-tech/stellar-wallets-kit`) — modal adapter for Freighter, xBull, Albedo, Lobstr, Rabet, Hana, etc.
+
+## Mint flow: commit-reveal
+
+Every mint and conjunction is a **two-step commit-reveal** so the caller cannot peek the random seed before submitting:
+
+1. **Commit** — caller supplies `observed_round` (the latest drand round they can see). Contract stores `target_round = observed_round + 10` and stamps `commit_ledger = now`. Emits a `Committed` event with the commitment id.
+2. **Wait** — `MIN_REVEAL_DELAY_LEDGERS = 8` ledgers (~40 s, ~13 drand rounds).
+3. **Reveal** — anyone can call `reveal_genesis(id)` / `reveal_conjoin(id)`. Contract verifies the delay elapsed, fetches `drand.get(target_round)`, computes the DNA, mints, deletes the commitment.
+
+Because the reveal delay (13 drand rounds) is strictly larger than the lookahead (10 rounds), the target round's randomness is provably published *after* the commit landed — there is no round whose seed the user could have inspected at commit time to pick a favorable child. Lying about `observed_round` doesn't help: the reveal-time ledger gap is independent of the caller's claim.
+
+`submitConjoin` on the frontend orchestrates this in one call:
+
+```
+committing → waiting (polls reveal_after) → revealing → done
+```
+
+Pass an `onProgress` callback to surface phase to the UI; `submitCommitConjoin` and `submitRevealConjoin` are also exported as separate halves if you need to defer the reveal.
 
 ## Sign-in
 
@@ -139,13 +157,28 @@ bash scripts/transfer-planet.sh 1 CXXXXXXX...
 
 The care button triggers a WebAuthn prompt; on confirmation, Smart Account Kit signs the auth entry, re-simulates, and submits.
 
+## Live deployment
+
+Contract: [`CAN2QTAWXO3GR3H4H5HZRMAPPRAUBDBQHOB35373NHANAMQ47YKJPCPJ`](https://stellar.expert/explorer/testnet/contract/CAN2QTAWXO3GR3H4H5HZRMAPPRAUBDBQHOB35373NHANAMQ47YKJPCPJ) on Stellar testnet.
+
+Tests: **29 contract** (Rust, soroban-sdk testutils) + **17 frontend** (Vitest, mocked Client + wallet kits) + **16 art renderer** (Node test runner, deterministic + trait→pixel propagation). All green in CI.
+
 ## Roadmap
 
 - [x] Repo scaffold + design
-- [ ] Soroban workspace + planet contract MVP
-- [ ] Unit tests (DNA crossover determinism, stat decay, sector modifiers)
-- [ ] Pixel-art TS renderer with snapshot tests
-- [ ] Next.js frontend (Galaxy view, Planet detail, Conjunction)
-- [ ] Testnet deploy script + genesis mint
-- [ ] Commit-reveal mint for fairness (v2)
-- [ ] Stat-aware art overlays (sickly / blooming) (v2)
+- [x] Soroban workspace + planet contract
+- [x] Contract unit tests (29 — DNA crossover, auth gates, cooldown, healthy gate, commit-reveal flow)
+- [x] Pixel-art TS renderer (16 tests covering layout parity + trait→pixel propagation)
+- [x] Next.js frontend with dual-wallet sign-in
+- [x] Galaxy map at `/galaxy`
+- [x] Testnet deploy script + genesis seeding
+- [x] **Commit-reveal mint** — anti-grinding two-step flow with strict reveal-delay guarantee
+- [x] **NonFungibleEnumerable** — `total_supply` / `get_token_id` / `get_owner_token_id`, no more brute-force scanning
+- [x] **TTL extensions** on care/migrate/views/transfer (closes silent data loss after 30 d)
+- [x] **Admin/drand rotation** (`set_admin`, `set_drand`) + `ConfigChanged` event
+- [x] Security audit (multi-page, surfaced 24 findings; 12 closed in code, others tracked)
+- [x] CI — fmt, clippy, cargo test, art tests, vitest, web build, wasm size guard
+- [ ] Stat-aware art overlays (sickly / blooming)
+- [ ] Indexer-backed listing (events → Postgres) so the frontend scales past ~1k tokens
+- [ ] Smart-account-kit `executeAndSubmit` for cross-owner conjoin (currently single-owner only)
+- [ ] Mainnet deployment
