@@ -77,9 +77,14 @@ export function computeRarity(input: RarityInput): Rarity {
   }
 
   // ----- Orbital -----
-  if (dna.ringsCount >= 5) add('Rings', 5, `${dna.ringsCount} rings`);
-  else if (dna.ringsCount >= 3) add('Rings', 1, `${dna.ringsCount} rings`);
-  if (dna.moonCount >= 4) add('Moons', 3, `${dna.moonCount} moons`);
+  // Game-audit F2: weight on absolute count, not threshold. Old form
+  // (>=5 → +5, >=3 → +1) made the +1 tier hit ~62% of mints with rings,
+  // dominating background points. New form rewards rare extremes (5 rings
+  // = +3, 7 rings = +4 capped) without over-contributing on mid-rolls.
+  const ringsPoints = Math.min(4, Math.max(0, dna.ringsCount - 2));
+  if (ringsPoints > 0) add('Rings', ringsPoints, `${dna.ringsCount} rings`);
+  const moonsPoints = Math.min(3, Math.max(0, dna.moonCount - 1));
+  if (moonsPoints > 0) add('Moons', moonsPoints, `${dna.moonCount} moons`);
 
   // ----- Stored rarity nibble (0..15) — quantized so it can't dominate -----
   const nibble = dna.rarity;

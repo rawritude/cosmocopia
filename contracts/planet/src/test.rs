@@ -731,8 +731,8 @@ fn dna_dominance_can_express_recessive() {
 #[test]
 fn dna_dominance_carries_recessive_to_child_latent() {
     // Parent A has unique R2 = 0xFF in trait slot 0. The child's R2 pool
-    // draws from {a_R1, a_R2, b_R1, b_R2}; setting rr[24] & 0x03 = 1
-    // selects pool[1] = a_R2.
+    // draws from {a_R2, a_R2, b_R2, b_R2} (game-audit F9 weighted draw);
+    // setting rr[24] & 0x03 = 1 selects pool[1] = a_R2.
     let env = Env::default();
     let mut rand_bytes = [0u8; 32];
     rand_bytes[24] = 1;

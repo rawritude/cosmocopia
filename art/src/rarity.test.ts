@@ -71,13 +71,21 @@ test('crown aura adds 5', () => {
   assert.equal(aura!.points, 5);
 });
 
-test('5+ rings add 5', () => {
-  // rings count = low 3 bits of byte 1 = 5.
-  const dna = buildDna({ 1: 0x05 });
-  const r = computeRarity({ dna });
-  const rings = r.contributions.find((c) => c.source === 'Rings');
-  assert.ok(rings);
-  assert.equal(rings!.points, 5);
+test('rings points scale with absolute count (game-audit F2)', () => {
+  // Post-F2 formula: points = clamp(count - 2, 0, 4). 5 rings → 3, 7 → 4.
+  const five = computeRarity({ dna: buildDna({ 1: 0x05 }) });
+  const fiveRings = five.contributions.find((c) => c.source === 'Rings');
+  assert.ok(fiveRings);
+  assert.equal(fiveRings!.points, 3);
+
+  const seven = computeRarity({ dna: buildDna({ 1: 0x07 }) });
+  const sevenRings = seven.contributions.find((c) => c.source === 'Rings');
+  assert.ok(sevenRings);
+  assert.equal(sevenRings!.points, 4);
+
+  // 2 rings = no contribution (was +0 before; remains +0 post-F2).
+  const two = computeRarity({ dna: buildDna({ 1: 0x02 }) });
+  assert.equal(two.contributions.find((c) => c.source === 'Rings'), undefined);
 });
 
 test('feature intensity 15 adds the density bonus', () => {

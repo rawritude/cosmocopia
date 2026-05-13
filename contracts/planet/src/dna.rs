@@ -166,12 +166,17 @@ pub fn crossover_with_latent(
             (contrib_b, contrib_a)
         };
 
-        // R2 is sampled from the four recessive slots of the two parents,
-        // so recessives bleed across generations.
+        // R2 is sampled from the two parents' R2 slots only (each weighted
+        // 2x in a 4-entry pool). This makes R2 the "deep memory" slot:
+        // P(specific grandparent R2 survives a generation) = 0.5 vs. the
+        // old 0.25, lifting half-life from ~1.7 to ~3 generations — closes
+        // game-audit F9. R1 still propagates via `sample_allele`'s R1 path
+        // every generation, so R1 alleles aren't extinct, just no longer
+        // demoted into the R2 slot.
         let pool = [
-            al[LATENT_R1_OFFSET + i],
             al[LATENT_R2_OFFSET + i],
-            bl[LATENT_R1_OFFSET + i],
+            al[LATENT_R2_OFFSET + i],
+            bl[LATENT_R2_OFFSET + i],
             bl[LATENT_R2_OFFSET + i],
         ];
         let child_r2 = pool[(rr[24 + (i % 8)] & 0x03) as usize];
