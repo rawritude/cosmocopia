@@ -20,14 +20,6 @@ pub fn class_of(dna: &[u8; DNA_LEN]) -> u8 {
     (dna[IDX_CLASS] >> 4) & 0x0F
 }
 
-pub fn generation_of(dna: &[u8; DNA_LEN]) -> u8 {
-    dna[IDX_GENERATION]
-}
-
-pub fn rarity_of(dna: &[u8; DNA_LEN]) -> u8 {
-    dna[IDX_AFFINITY_RARITY] & 0x0F
-}
-
 pub fn write_birth_round(dna: &mut [u8; DNA_LEN], round: u64) {
     // store the low 32 bits big-endian — enough headroom for centuries of drand
     let r = round as u32;

@@ -1,0 +1,17 @@
+{
+  "name": "cosmocopia",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "art",
+    "web"
+  ],
+  "scripts": {
+    "web": "npm --workspace web run dev",
+    "render": "npm --workspace art run render",
+    "test:art": "npm --workspace art run test"
+  },
+  "dependencies": {
+    "playwright": "^1.58.0"
+  }
+}

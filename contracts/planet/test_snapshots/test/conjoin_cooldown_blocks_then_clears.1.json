@@ -108,6 +108,7 @@
         }
       ]
     ],
+    [],
     [
       [
         "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4",
@@ -136,7 +137,7 @@
   ],
   "ledger": {
     "protocol_version": 25,
-    "sequence_number": 0,
+    "sequence_number": 800,
     "timestamp": 0,
     "network_id": "0000000000000000000000000000000000000000000000000000000000000000",
     "base_reserve": 0,
@@ -448,7 +449,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 518400
+        "live_until": 519200
       },
       {
         "entry": {
@@ -583,7 +584,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 518400
+        "live_until": 519200
       },
       {
         "entry": {
@@ -604,7 +605,7 @@
               },
               "durability": "persistent",
               "val": {
-                "u32": 0
+                "u32": 800
               }
             }
           },
@@ -658,13 +659,13 @@
               },
               "durability": "persistent",
               "val": {
-                "u32": 0
+                "u32": 800
               }
             }
           },
           "ext": "v0"
         },
-        "live_until": 4095
+        "live_until": 4895
       },
       {
         "entry": {
@@ -745,7 +746,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 518400
+        "live_until": 519200
       },
       {
         "entry": {
@@ -799,7 +800,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 4095
+        "live_until": 4895
       },
       {
         "entry": {
@@ -1130,7 +1131,7 @@
                       "symbol": "biomass"
                     },
                     "val": {
-                      "u32": 128
+                      "u32": 127
                     }
                   },
                   {
@@ -1138,7 +1139,7 @@
                       "symbol": "gravity"
                     },
                     "val": {
-                      "u32": 128
+                      "u32": 130
                     }
                   },
                   {
@@ -1146,7 +1147,7 @@
                       "symbol": "hydration"
                     },
                     "val": {
-                      "u32": 128
+                      "u32": 124
                     }
                   },
                   {
@@ -1154,7 +1155,7 @@
                       "symbol": "last_ledger"
                     },
                     "val": {
-                      "u32": 0
+                      "u32": 800
                     }
                   },
                   {
@@ -1162,7 +1163,7 @@
                       "symbol": "spirit"
                     },
                     "val": {
-                      "u32": 160
+                      "u32": 159
                     }
                   },
                   {
@@ -1170,7 +1171,7 @@
                       "symbol": "temperature"
                     },
                     "val": {
-                      "u32": 128
+                      "u32": 131
                     }
                   }
                 ]
@@ -1179,7 +1180,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 518400
+        "live_until": 519200
       },
       {
         "entry": {
@@ -1311,7 +1312,7 @@
               "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4",
               "key": {
                 "ledger_key_nonce": {
-                  "nonce": "2032731177588607455"
+                  "nonce": "4270020994084947596"
                 }
               },
               "durability": "temporary",
@@ -1320,7 +1321,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 6311999
+        "live_until": 6312799
       },
       {
         "entry": {

@@ -240,19 +240,18 @@ impl PlanetContract {
     }
 
     pub fn cooldown_of(e: &Env, id: u32) -> u32 {
-        let last: u32 = e
-            .storage()
-            .persistent()
-            .get(&DataKey::LastConjoin(id))
-            .unwrap_or(0);
+        let key = DataKey::LastConjoin(id);
+        if !e.storage().persistent().has(&key) {
+            return 0;
+        }
+        let last: u32 = e.storage().persistent().get(&key).unwrap();
         let now = e.ledger().sequence();
         let cooldown: u32 = e
             .storage()
             .instance()
             .get(&DataKey::ConjoinCooldown)
             .unwrap_or(DEFAULT_COOLDOWN);
-        let elapsed = now.saturating_sub(last);
-        cooldown.saturating_sub(elapsed)
+        cooldown.saturating_sub(now.saturating_sub(last))
     }
 
     pub fn admin(e: &Env) -> Address {
@@ -341,17 +340,17 @@ fn read_coords(e: &Env, id: u32) -> (i32, i32) {
 }
 
 fn check_cooldown(e: &Env, id: u32, now: u32) -> Result<(), Error> {
-    let last: u32 = e
-        .storage()
-        .persistent()
-        .get(&DataKey::LastConjoin(id))
-        .unwrap_or(0);
+    let key = DataKey::LastConjoin(id);
+    if !e.storage().persistent().has(&key) {
+        return Ok(());
+    }
+    let last: u32 = e.storage().persistent().get(&key).unwrap();
     let cooldown: u32 = e
         .storage()
         .instance()
         .get(&DataKey::ConjoinCooldown)
         .unwrap_or(DEFAULT_COOLDOWN);
-    if last != 0 && now.saturating_sub(last) < cooldown {
+    if now.saturating_sub(last) < cooldown {
         return Err(Error::OnCooldown);
     }
     Ok(())

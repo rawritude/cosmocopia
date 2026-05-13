@@ -24,11 +24,3 @@ pub fn sector_of(x: i32, y: i32) -> u8 {
     }
 }
 
-/// Squared Euclidean distance between two coords. Used for conjunction cost.
-pub fn dist2(a: (i32, i32), b: (i32, i32)) -> u64 {
-    let dx = (a.0 as i64) - (b.0 as i64);
-    let dy = (a.1 as i64) - (b.1 as i64);
-    let dx = dx.unsigned_abs();
-    let dy = dy.unsigned_abs();
-    dx.saturating_mul(dx).saturating_add(dy.saturating_mul(dy))
-}
