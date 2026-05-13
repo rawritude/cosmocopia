@@ -152,9 +152,9 @@ fn effect(class: u8, action: Care) -> (i32, i32, i32, i32, i32) {
 pub fn healthy_factor(v: &Vitals) -> u32 {
     let mut score = 0u32;
     for s in [v.temperature, v.hydration, v.gravity, v.biomass, v.spirit] {
-        if s >= HEALTHY_MIN && s <= HEALTHY_MAX {
+        if (HEALTHY_MIN..=HEALTHY_MAX).contains(&s) {
             score += 20;
-        } else if s >= 20 && s <= 240 {
+        } else if (20..=240).contains(&s) {
             score += 10;
         }
     }

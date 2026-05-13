@@ -103,9 +103,7 @@ pub fn crossover(
     out[IDX_AFFINITY_RARITY] = affinity | (rarity & 0x0F);
 
     // Unique salt: stir rand into bytes 18..32 to keep every child distinct.
-    for i in IDX_RESERVED..DNA_LEN {
-        out[i] = rr[i];
-    }
+    out[IDX_RESERVED..DNA_LEN].copy_from_slice(&rr[IDX_RESERVED..DNA_LEN]);
 
     BytesN::from_array(env, &out)
 }
