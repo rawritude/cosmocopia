@@ -26,8 +26,10 @@ pub fn write_birth_round(dna: &mut [u8; DNA_LEN], round: u64) {
     dna[IDX_BIRTH_ROUND..IDX_BIRTH_ROUND + 4].copy_from_slice(&r.to_be_bytes());
 }
 
-/// Build genesis DNA from a drand-verified random seed.
-pub fn from_seed(env: &Env, seed: &BytesN<32>, round: u64) -> BytesN<32> {
+/// Build genesis DNA from a drand-verified random seed. `token_id` is mixed
+/// into the salt so two genesis planets minted on the same round still get
+/// distinct reserved bytes (audit Informational #1).
+pub fn from_seed(env: &Env, seed: &BytesN<32>, round: u64, token_id: u32) -> BytesN<32> {
     let s = seed.to_array();
     let mut out = [0u8; DNA_LEN];
 
@@ -46,8 +48,10 @@ pub fn from_seed(env: &Env, seed: &BytesN<32>, round: u64) -> BytesN<32> {
     out[IDX_GENERATION] = 0;
     out[IDX_AFFINITY_RARITY] = s[8];
 
-    // Reserved/unique salt fills the rest from seed.
+    // Reserved/unique salt fills the rest from seed, with token_id XOR'd in
+    // so every planet has a unique salt even on the same round.
     out[IDX_RESERVED..DNA_LEN].copy_from_slice(&s[IDX_RESERVED..DNA_LEN]);
+    mix_token_id_into_salt(&mut out, token_id);
 
     BytesN::from_array(env, &out)
 }
@@ -66,6 +70,7 @@ pub fn crossover(
     b: &BytesN<32>,
     rand: &BytesN<32>,
     round: u64,
+    token_id: u32,
 ) -> BytesN<32> {
     let aa = a.to_array();
     let bb = b.to_array();
@@ -102,8 +107,22 @@ pub fn crossover(
     let affinity = if (rr[25] & 1) == 0 { aff_a } else { aff_b };
     out[IDX_AFFINITY_RARITY] = affinity | (rarity & 0x0F);
 
-    // Unique salt: stir rand into bytes 18..32 to keep every child distinct.
+    // Unique salt: stir rand into bytes 18..32 + XOR child token id so
+    // siblings born from the same conjoin transaction (impossible today, but
+    // robust to future batching) and same-round mints stay distinct.
     out[IDX_RESERVED..DNA_LEN].copy_from_slice(&rr[IDX_RESERVED..DNA_LEN]);
+    mix_token_id_into_salt(&mut out, token_id);
 
     BytesN::from_array(env, &out)
+}
+
+/// XORs the 4 bytes of `token_id` into the start of the reserved salt
+/// region. Spreads the entropy across multiple bytes so a flipped low bit
+/// in the id is observable several pixels away in the rendered art.
+fn mix_token_id_into_salt(out: &mut [u8; DNA_LEN], token_id: u32) {
+    let id = token_id.to_le_bytes();
+    out[IDX_RESERVED] ^= id[0];
+    out[IDX_RESERVED + 1] ^= id[1];
+    out[IDX_RESERVED + 2] ^= id[2];
+    out[IDX_RESERVED + 3] ^= id[3];
 }

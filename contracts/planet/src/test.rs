@@ -138,7 +138,7 @@ fn conjoin_produces_child_with_lineage_signature() {
         dna_a[dna::IDX_GENERATION].max(dna_b[dna::IDX_GENERATION]) + 1
     );
 
-    assert_eq!(f.planet.coords_of(&child), (5, 5));
+    assert_eq!(f.planet.coords_of(&child), (5, 5)); // bindings auto-unwrap
 }
 
 #[test]
@@ -234,8 +234,8 @@ fn dna_crossover_is_deterministic() {
     let a = BytesN::from_array(&env, &[0x11; 32]);
     let b = BytesN::from_array(&env, &[0x22; 32]);
     let r = BytesN::from_array(&env, &[0x33; 32]);
-    let c1 = dna::crossover(&env, &a, &b, &r, 42);
-    let c2 = dna::crossover(&env, &a, &b, &r, 42);
+    let c1 = dna::crossover(&env, &a, &b, &r, 42, 0);
+    let c2 = dna::crossover(&env, &a, &b, &r, 42, 0);
     assert_eq!(c1, c2);
 }
 
@@ -246,8 +246,8 @@ fn dna_crossover_differs_per_seed() {
     let b = BytesN::from_array(&env, &[0x22; 32]);
     let r1 = BytesN::from_array(&env, &[0x33; 32]);
     let r2 = BytesN::from_array(&env, &[0x99; 32]);
-    let c1 = dna::crossover(&env, &a, &b, &r1, 7);
-    let c2 = dna::crossover(&env, &a, &b, &r2, 7);
+    let c1 = dna::crossover(&env, &a, &b, &r1, 7, 0);
+    let c2 = dna::crossover(&env, &a, &b, &r2, 7, 0);
     assert_ne!(c1, c2);
 }
 
@@ -445,4 +445,81 @@ fn conjoin_rejects_unhealthy_parent() {
         }
         other => panic!("unexpected: {:?}", other),
     }
+}
+
+#[test]
+fn conjoin_rejects_recipient_not_parent_owner() {
+    // Audit High #1: 'to' must be one of the parents' owners.
+    let f = setup(0xCC);
+    let user = Address::generate(&f.env);
+    let stranger = Address::generate(&f.env);
+    let a = f.planet.mint_genesis(&user, &1u64, &0, &0);
+    let b = f.planet.mint_genesis(&user, &1u64, &1, &1);
+    // user owns both parents but tries to mint child to a stranger — rejected.
+    let err = f
+        .planet
+        .try_conjoin(&a, &b, &stranger, &1u64)
+        .err()
+        .unwrap()
+        .unwrap();
+    assert_eq!(err, Error::RecipientNotParentOwner);
+}
+
+#[test]
+fn set_cooldown_rejects_out_of_range() {
+    // Audit Low #1: cooldown bounds.
+    let f = setup(0xDD);
+    // 0 and u32::MAX should both fail.
+    assert!(f.planet.try_set_cooldown(&0u32).err().is_some());
+    assert!(f.planet.try_set_cooldown(&u32::MAX).err().is_some());
+    // A reasonable value succeeds.
+    f.planet.set_cooldown(&720u32);
+}
+
+#[test]
+fn set_admin_rotates_admin() {
+    let f = setup(0xEE);
+    let new_admin = Address::generate(&f.env);
+    f.planet.set_admin(&new_admin);
+    assert_eq!(f.planet.admin(), new_admin);
+}
+
+#[test]
+fn set_drand_rotates_verifier() {
+    let f = setup(0xFE);
+    let new_drand = Address::generate(&f.env);
+    f.planet.set_drand(&new_drand);
+    assert_eq!(f.planet.drand_verifier(), new_drand);
+}
+
+#[test]
+fn extend_succeeds_for_existing_planet() {
+    let f = setup(0xFA);
+    let user = Address::generate(&f.env);
+    let id = f.planet.mint_genesis(&user, &1u64, &0, &0);
+    // Anyone can extend an existing planet's TTL.
+    f.planet.extend(&id);
+}
+
+#[test]
+fn extend_rejects_unknown_planet() {
+    let f = setup(0xFB);
+    let err = f.planet.try_extend(&999u32).err().unwrap().unwrap();
+    assert_eq!(err, Error::UnknownPlanet);
+}
+
+#[test]
+fn enumerable_views_present_via_trait() {
+    // The Enumerable extension auto-exports total_supply / get_token_id /
+    // get_owner_token_id. Smoke-test that they reflect minted state.
+    let f = setup(0x12);
+    let user = Address::generate(&f.env);
+    assert_eq!(f.planet.total_supply(), 0);
+    let _ = f.planet.mint_genesis(&user, &1u64, &0, &0);
+    let _ = f.planet.mint_genesis(&user, &1u64, &1, &1);
+    assert_eq!(f.planet.total_supply(), 2);
+    assert_eq!(f.planet.get_token_id(&0), 0);
+    assert_eq!(f.planet.get_token_id(&1), 1);
+    assert_eq!(f.planet.get_owner_token_id(&user, &0), 0);
+    assert_eq!(f.planet.get_owner_token_id(&user, &1), 1);
 }

@@ -8,9 +8,11 @@ const RPC = process.env.NEXT_PUBLIC_STELLAR_RPC_URL!;
 const PASSPHRASE = process.env.NEXT_PUBLIC_STELLAR_NETWORK_PASSPHRASE!;
 const CONTRACT = process.env.NEXT_PUBLIC_PLANET_CONTRACT!;
 
-// Simulations still need a real ed25519 G-key as the source so the RPC can
-// fetch a sequence number. We use the deployer's account (already funded);
-// this is a *read-only* fallback — it never signs anything.
+// Simulations need a valid funded G-key as the tx source so the RPC can fetch
+// a sequence number. Audit High #4 flagged hardcoding the deployer here as a
+// SPOF — long-term fix is to drop in a simulationAccountSequence override in
+// the stellar-sdk, but for now we tolerate the dependency on this account
+// existing on chain (it's the testnet deployer and will stay funded).
 const READ_SOURCE = 'GBVK7HKPHCELHPVFTJRMGRL5ROWQ4FOWTK4HC66SIGW5Y4ZBZP2OUR2Z';
 
 let _readClient: Client | null = null;
@@ -35,70 +37,80 @@ export type Planet = {
   owner?: string;
 };
 
-/// Scan token ids upward and collect every planet that exists, regardless of
-/// owner. Used by the galaxy map. Stops after `missTolerance` consecutive
-/// missing ids — Soroban tokens are sequentially minted so a run of misses
-/// means we've walked past the live range.
-export async function listAllPlanets(
-  maxScan = 128,
-  missTolerance = 5,
-): Promise<Planet[]> {
-  const client = readClient();
-  const out: Planet[] = [];
-  let misses = 0;
-  for (let id = 0; id < maxScan; id++) {
-    let owner: string | null = null;
-    try {
-      const r = await client.owner_of({ token_id: id });
-      owner = r.result as unknown as string;
-      misses = 0;
-    } catch {
-      misses++;
-      if (misses >= missTolerance && out.length > 0) break;
-      continue;
+// ---------------------------------------------------------------------------
+// `Result<T, E>` unwrap that fails loudly. Audit High #5 noted that the prior
+// duck-typing on { value } would silently turn Err into undefined; we now
+// dispatch on the tagged-union shape stellar-sdk uses and throw on Err.
+// ---------------------------------------------------------------------------
+function unwrapResult<T>(r: unknown): T {
+  if (r && typeof r === 'object' && 'tag' in r) {
+    const t = r as unknown as { tag: 'Ok' | 'Err'; values: unknown[] };
+    if (t.tag === 'Ok') return (t.values?.[0]) as T;
+    if (t.tag === 'Err') {
+      throw new Error(`contract returned Err: ${JSON.stringify(t.values?.[0])}`);
     }
-    const planet = await getPlanet(id);
-    if (planet) out.push({ ...planet, owner: owner ?? undefined });
   }
-  return out;
+  if (r && typeof r === 'object' && 'unwrap' in r && typeof (r as { unwrap: unknown }).unwrap === 'function') {
+    return ((r as { unwrap: () => T }).unwrap)();
+  }
+  return r as T;
 }
 
-/// Scan token ids upward and collect those owned by `address`. With no
-/// indexer in the project yet, this is a brute-force linear sweep — fine for
-/// the testnet seed of a few dozen tokens.
-export async function listOwnedPlanets(
-  address: string,
-  maxScan = 64,
-): Promise<Planet[]> {
+// ---------------------------------------------------------------------------
+// Enumerable-backed listings (audit Informational #3 + scale concern). The
+// contract now exposes total_supply / get_token_id / get_owner_token_id from
+// the OZ NonFungibleEnumerable trait, so we no longer brute-force scan.
+// ---------------------------------------------------------------------------
+
+export async function totalSupply(): Promise<number> {
+  const r = await readClient().total_supply();
+  return Number(r.result);
+}
+
+export async function listAllPlanets(): Promise<Planet[]> {
+  const client = readClient();
+  const supply = Number((await client.total_supply()).result);
+  if (supply === 0) return [];
+
+  // Resolve token ids in parallel via the enumerable index.
+  const ids = await Promise.all(
+    Array.from({ length: supply }, (_, i) =>
+      client.get_token_id({ index: i }).then((tx) => Number(tx.result)),
+    ),
+  );
+  // Fetch planet detail + owner in parallel for each id.
+  const planets = await Promise.all(ids.map(async (id) => {
+    const planet = await getPlanet(id);
+    if (!planet) return null;
+    try {
+      const r = await client.owner_of({ token_id: id });
+      return { ...planet, owner: r.result as unknown as string };
+    } catch {
+      return planet;
+    }
+  }));
+  return planets.filter((p): p is Planet => p !== null);
+}
+
+export async function listOwnedPlanets(address: string): Promise<Planet[]> {
   const client = readClient();
   let bal = 0;
   try {
-    const r = await client.balance({ account: address });
-    bal = Number(r.result);
+    bal = Number((await client.balance({ account: address })).result);
   } catch {
     bal = 0;
   }
   if (bal === 0) return [];
 
-  const owned: Planet[] = [];
-  let consecutiveMisses = 0;
-  for (let id = 0; id < maxScan && owned.length < bal; id++) {
-    let owner: string | null = null;
-    try {
-      const r = await client.owner_of({ token_id: id });
-      owner = r.result as unknown as string;
-      consecutiveMisses = 0;
-    } catch {
-      consecutiveMisses++;
-      // Five misses in a row → assume we've walked past the live range.
-      if (consecutiveMisses >= 5 && owned.length > 0) break;
-      continue;
-    }
-    if (owner !== address) continue;
-    const planet = await getPlanet(id);
-    if (planet) owned.push(planet);
-  }
-  return owned;
+  const ids = await Promise.all(
+    Array.from({ length: bal }, (_, i) =>
+      client
+        .get_owner_token_id({ owner: address, index: i })
+        .then((tx) => Number(tx.result)),
+    ),
+  );
+  const planets = await Promise.all(ids.map((id) => getPlanet(id)));
+  return planets.filter((p): p is Planet => p !== null);
 }
 
 export async function getPlanet(id: number): Promise<Planet | null> {
@@ -109,11 +121,9 @@ export async function getPlanet(id: number): Promise<Planet | null> {
       client.vitals_of({ id }),
       client.coords_of({ id }),
     ]);
-    const dnaResult = dnaTx.result;
-    const vitalsResult = vitalsTx.result;
-    const dnaBuf = unwrapResult(dnaResult) as Buffer;
-    const vitals = unwrapResult(vitalsResult) as Vitals;
-    const [x, y] = coordsTx.result as unknown as [number, number];
+    const dnaBuf = unwrapResult<Buffer | Uint8Array>(dnaTx.result);
+    const vitals = unwrapResult<Vitals>(vitalsTx.result);
+    const [x, y] = unwrapResult<readonly [number, number]>(coordsTx.result);
     return {
       id,
       dna: new Uint8Array(dnaBuf),
@@ -125,15 +135,9 @@ export async function getPlanet(id: number): Promise<Planet | null> {
   }
 }
 
-/// `Result<T>` from bindings is either `{ value: T }` (Ok) or `{ error: ... }`.
-/// Unwrap or throw.
-function unwrapResult<T>(r: unknown): T {
-  if (r && typeof r === 'object' && 'value' in r) return (r as { value: T }).value;
-  if (r && typeof r === 'object' && 'unwrap' in r) {
-    return (r as { unwrap: () => T }).unwrap();
-  }
-  return r as T;
-}
+// ---------------------------------------------------------------------------
+// Care + Conjoin write paths
+// ---------------------------------------------------------------------------
 
 /// Care action codes — match the Care enum in contracts/planet/src/stats.rs.
 export const CARE = {
@@ -156,9 +160,7 @@ export async function submitCare(
   action: number,
   wallet: WalletState,
 ): Promise<string> {
-  if (wallet.status !== 'connected') {
-    throw new Error('connect a wallet first');
-  }
+  if (wallet.status !== 'connected') throw new Error('connect a wallet first');
 
   if (wallet.kind === 'passkey') {
     const { getPasskeyKit } = await import('./wallet-context');
@@ -167,14 +169,10 @@ export async function submitCare(
       contractId: CONTRACT,
       networkPassphrase: PASSPHRASE,
       rpcUrl: RPC,
-      // Smart account contract IDs (C…) aren't valid as tx sources; the kit's
-      // deterministic deployer G-key is — the kit later swaps in its own fee
-      // payer if needed via signAndSubmit.
       publicKey: kit.deployerPublicKey,
     });
     const tx = await client.care({ id, action });
-    const result = await kit.signAndSubmit(tx);
-    return extractHash(result);
+    return extractHash(await kit.signAndSubmit(tx));
   }
 
   // Classic wallet (Freighter et al.)
@@ -184,17 +182,14 @@ export async function submitCare(
     networkPassphrase: PASSPHRASE,
     rpcUrl: RPC,
     publicKey: wallet.address,
-    signTransaction: async (xdr: string) => {
-      return await swk.StellarWalletsKit.signTransaction(xdr, {
+    signTransaction: async (xdr: string) =>
+      swk.StellarWalletsKit.signTransaction(xdr, {
         networkPassphrase: PASSPHRASE,
         address: wallet.address,
-      });
-    },
+      }),
   });
-
   const tx = await client.care({ id, action });
-  const sent = await tx.signAndSend();
-  return extractHash(sent);
+  return extractHash(await tx.signAndSend());
 }
 
 function extractHash(result: unknown): string {
@@ -213,7 +208,7 @@ const DRAND_CONTRACT = 'CAESC7SC5EW5P2P3IM5Q7E64ZNDATVSN5F57NTCH5E7GJRPDM76KF7QM
 /// for mint_genesis / conjoin so the read footprint is deterministic.
 export async function latestDrandRound(): Promise<bigint> {
   const sdk = await import('@stellar/stellar-sdk');
-  const { Contract, TransactionBuilder, BASE_FEE, rpc, Address } = sdk;
+  const { Contract, TransactionBuilder, BASE_FEE, rpc } = sdk;
   const server = new rpc.Server(RPC, { allowHttp: false });
   const account = await server.getAccount(READ_SOURCE);
   const tx = new TransactionBuilder(account, {
@@ -229,26 +224,20 @@ export async function latestDrandRound(): Promise<bigint> {
   }
   const result = (sim as any).result?.retval;
   if (!result) throw new Error('drand latest() returned nothing');
-  // The retval is XDR — decode via stellar-sdk scValToNative.
   const native = sdk.scValToNative(result);
-  // Shape: Option<[u64, BytesN<32>]> → either [round, bytes] tuple or null.
   if (!Array.isArray(native)) throw new Error('unexpected drand result shape');
   const round = native[0];
   return typeof round === 'bigint' ? round : BigInt(round);
 }
 
-/// Conjoin two parents. Returns the tx hash.
-///
-/// The caller picks the drand round off-chain so simulate→submit stays
-/// footprint-stable; we fetch the current one right before submitting.
+/// Conjoin two parents. Returns the tx hash. The new contract enforces
+/// `to ∈ {owner_a, owner_b}` (audit High #1).
 export async function submitConjoin(
   parentA: number,
   parentB: number,
   wallet: WalletState,
 ): Promise<string> {
-  if (wallet.status !== 'connected') {
-    throw new Error('connect a wallet first');
-  }
+  if (wallet.status !== 'connected') throw new Error('connect a wallet first');
   const round = await latestDrandRound();
 
   if (wallet.kind === 'passkey') {
@@ -266,23 +255,20 @@ export async function submitConjoin(
       to: wallet.address,
       round,
     });
-    const result = await kit.signAndSubmit(tx);
-    return extractHash(result);
+    return extractHash(await kit.signAndSubmit(tx));
   }
 
-  // Classic wallet
   const swk = await import('@creit-tech/stellar-wallets-kit');
   const client = new Client({
     contractId: CONTRACT,
     networkPassphrase: PASSPHRASE,
     rpcUrl: RPC,
     publicKey: wallet.address,
-    signTransaction: async (xdr: string) => {
-      return await swk.StellarWalletsKit.signTransaction(xdr, {
+    signTransaction: async (xdr: string) =>
+      swk.StellarWalletsKit.signTransaction(xdr, {
         networkPassphrase: PASSPHRASE,
         address: wallet.address,
-      });
-    },
+      }),
   });
   const tx = await client.conjoin({
     parent_a: parentA,
@@ -290,6 +276,5 @@ export async function submitConjoin(
     to: wallet.address,
     round,
   });
-  const sent = await tx.signAndSend();
-  return extractHash(sent);
+  return extractHash(await tx.signAndSend());
 }

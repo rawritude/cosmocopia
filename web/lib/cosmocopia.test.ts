@@ -6,9 +6,14 @@ const ownerMap = new Map<number, string>();
 const dnaMap = new Map<number, Uint8Array>();
 const balances = new Map<string, number>();
 const coordsMap = new Map<number, [number, number]>();
+const tokensInOrder: number[] = [];                            // global enumerable
+const ownerTokens = new Map<string, number[]>();               // per-owner enumerable
 const vitalsTemplate = {
   biomass: 128, gravity: 128, hydration: 128, last_ledger: 100, spirit: 160, temperature: 128,
 };
+
+// Helper: wrap a value as Result::Ok in the tagged-union shape stellar-sdk uses.
+const ok = <T>(value: T) => ({ tag: 'Ok' as const, values: [value] });
 
 vi.mock('./planet-bindings/src/index', () => {
   return {
@@ -16,6 +21,15 @@ vi.mock('./planet-bindings/src/index', () => {
       constructor(public opts: any) {}
       async balance({ account }: { account: string }) {
         return { result: balances.get(account) ?? 0 };
+      }
+      async total_supply() {
+        return { result: tokensInOrder.length };
+      }
+      async get_token_id({ index }: { index: number }) {
+        return { result: tokensInOrder[index] };
+      }
+      async get_owner_token_id({ owner, index }: { owner: string; index: number }) {
+        return { result: (ownerTokens.get(owner) ?? [])[index] };
       }
       async owner_of({ token_id }: { token_id: number }) {
         const o = ownerMap.get(token_id);
@@ -25,38 +39,29 @@ vi.mock('./planet-bindings/src/index', () => {
       async dna_of({ id }: { id: number }) {
         const d = dnaMap.get(id);
         if (!d) throw new Error(`no dna ${id}`);
-        return { result: { value: Buffer.from(d) } };
+        return { result: ok(Buffer.from(d)) };
       }
       async vitals_of({ id }: { id: number }) {
         if (!ownerMap.has(id)) throw new Error(`no vitals ${id}`);
-        return { result: { value: { ...vitalsTemplate } } };
+        return { result: ok({ ...vitalsTemplate }) };
       }
       async coords_of({ id }: { id: number }) {
-        return { result: coordsMap.get(id) ?? [0, 0] };
+        return { result: ok(coordsMap.get(id) ?? [0, 0]) };
       }
       async care(_args: any) {
-        return {
-          signAndSend: async () => ({ hash: 'TXHASH_CLASSIC' }),
-        };
+        return { signAndSend: async () => ({ hash: 'TXHASH_CLASSIC' }) };
       }
       async conjoin(_args: any) {
-        return {
-          signAndSend: async () => ({ hash: 'TXHASH_CLASSIC_CONJOIN' }),
-        };
+        return { signAndSend: async () => ({ hash: 'TXHASH_CLASSIC_CONJOIN' }) };
       }
     },
   };
 });
 
-// Mock @creit-tech/stellar-wallets-kit so we never reach a real wallet modal.
 vi.mock('@creit-tech/stellar-wallets-kit', () => ({
-  StellarWalletsKit: {
-    signTransaction: vi.fn(async () => ({ signedTxXdr: 'SIGNED' })),
-  },
+  StellarWalletsKit: { signTransaction: vi.fn(async () => ({ signedTxXdr: 'SIGNED' })) },
 }));
 
-// Mock the passkey path via the wallet-context export. The mock returns a kit
-// whose signAndSubmit just echoes a hash so we can assert it ran.
 vi.mock('./wallet-context', () => ({
   getPasskeyKit: vi.fn(async () => ({
     deployerPublicKey: 'GDEPLOYER_PUBLIC_KEY_FAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE',
@@ -64,8 +69,6 @@ vi.mock('./wallet-context', () => ({
   })),
 }));
 
-// Mock the @stellar/stellar-sdk used by latestDrandRound. We need a minimal
-// surface that returns a [round, randomness] tuple from simulateTransaction.
 vi.mock('@stellar/stellar-sdk', () => {
   class Contract {
     constructor(public id: string) {}
@@ -103,11 +106,25 @@ afterEach(() => {
   dnaMap.clear();
   balances.clear();
   coordsMap.clear();
+  tokensInOrder.length = 0;
+  ownerTokens.clear();
   vi.clearAllMocks();
 });
 
 const OWNER = 'GBVK7HKPHCELHPVFTJRMGRL5ROWQ4FOWTK4HC66SIGW5Y4ZBZP2OUR2Z';
 const OTHER = 'GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ';
+
+// Helper: register a planet across all mock maps in one call.
+function seedPlanet(id: number, owner: string, x = 0, y = 0, dnaByte = 0x11) {
+  ownerMap.set(id, owner);
+  dnaMap.set(id, new Uint8Array(32).fill(dnaByte));
+  coordsMap.set(id, [x, y]);
+  tokensInOrder.push(id);
+  const lst = ownerTokens.get(owner) ?? [];
+  lst.push(id);
+  ownerTokens.set(owner, lst);
+  balances.set(owner, (balances.get(owner) ?? 0) + 1);
+}
 
 describe('CARE enum', () => {
   it('codes match the contract Care::from_u32 ordering', () => {
@@ -119,52 +136,51 @@ describe('CARE enum', () => {
   });
 });
 
-describe('listOwnedPlanets', () => {
-  it('returns empty list when balance is zero', async () => {
-    balances.set(OWNER, 0);
-    const list = await cc.listOwnedPlanets(OWNER);
-    expect(list).toEqual([]);
-  });
-
-  it('filters by owner — only matching tokens come back', async () => {
-    balances.set(OWNER, 2);
-    ownerMap.set(0, OWNER);
-    ownerMap.set(1, OTHER);
-    ownerMap.set(2, OWNER);
-    dnaMap.set(0, new Uint8Array(32).fill(0x11));
-    dnaMap.set(2, new Uint8Array(32).fill(0x22));
-    coordsMap.set(0, [0, 0]);
-    coordsMap.set(2, [5, 5]);
-    const list = await cc.listOwnedPlanets(OWNER);
-    expect(list).toHaveLength(2);
-    expect(list.map((p) => p.id).sort()).toEqual([0, 2]);
-  });
-
-  it('terminates early after a run of missing token ids', async () => {
-    balances.set(OWNER, 1);
-    ownerMap.set(0, OWNER);
-    dnaMap.set(0, new Uint8Array(32));
-    coordsMap.set(0, [0, 0]);
-    // ids 1..63 all miss; balance is already satisfied at 1.
-    const list = await cc.listOwnedPlanets(OWNER, 64);
-    expect(list).toHaveLength(1);
-    expect(list[0].id).toBe(0);
+describe('totalSupply', () => {
+  it('returns current total', async () => {
+    expect(await cc.totalSupply()).toBe(0);
+    seedPlanet(0, OWNER);
+    seedPlanet(1, OTHER);
+    expect(await cc.totalSupply()).toBe(2);
   });
 });
 
-describe('listAllPlanets', () => {
-  it('walks every existing id regardless of owner, stopping after 5 consecutive misses', async () => {
-    ownerMap.set(0, OWNER);
-    ownerMap.set(1, OTHER);
-    ownerMap.set(2, OWNER);
-    // gap from id 3..7 should cap at 5 misses and stop
-    for (let id = 0; id <= 2; id++) {
-      dnaMap.set(id, new Uint8Array(32).fill(id));
-      coordsMap.set(id, [id, id]);
-    }
-    const list = await cc.listAllPlanets(64);
+describe('listAllPlanets (enumerable-backed)', () => {
+  it('returns empty when supply is 0', async () => {
+    expect(await cc.listAllPlanets()).toEqual([]);
+  });
+
+  it('walks every token via get_token_id', async () => {
+    seedPlanet(0, OWNER);
+    seedPlanet(1, OTHER);
+    seedPlanet(2, OWNER);
+    const list = await cc.listAllPlanets();
     expect(list).toHaveLength(3);
-    expect(list.map((p) => p.owner).sort()).toEqual([OTHER, OWNER, OWNER]);
+    expect(list.map((p) => p.id).sort()).toEqual([0, 1, 2]);
+  });
+
+  it('attaches owner address to each planet', async () => {
+    seedPlanet(0, OWNER);
+    seedPlanet(1, OTHER);
+    const list = await cc.listAllPlanets();
+    const byId = new Map(list.map((p) => [p.id, p.owner]));
+    expect(byId.get(0)).toBe(OWNER);
+    expect(byId.get(1)).toBe(OTHER);
+  });
+});
+
+describe('listOwnedPlanets (enumerable-backed)', () => {
+  it('returns empty when balance is 0', async () => {
+    expect(await cc.listOwnedPlanets(OWNER)).toEqual([]);
+  });
+
+  it('returns only planets owned by the address via get_owner_token_id', async () => {
+    seedPlanet(0, OWNER, 0, 0);
+    seedPlanet(1, OTHER, 5, 5);
+    seedPlanet(2, OWNER, 10, 10);
+    const list = await cc.listOwnedPlanets(OWNER);
+    expect(list).toHaveLength(2);
+    expect(list.map((p) => p.id).sort()).toEqual([0, 2]);
   });
 });
 
@@ -175,9 +191,7 @@ describe('getPlanet', () => {
   });
 
   it('hydrates a known planet with dna + vitals + coords', async () => {
-    ownerMap.set(7, OWNER);
-    dnaMap.set(7, new Uint8Array(32).fill(0xAB));
-    coordsMap.set(7, [3, -4]);
+    seedPlanet(7, OWNER, 3, -4, 0xAB);
     const p = await cc.getPlanet(7);
     expect(p).not.toBeNull();
     expect(p!.id).toBe(7);
@@ -197,17 +211,10 @@ describe('latestDrandRound', () => {
 
 describe('submitCare wallet branching', () => {
   const classicState = {
-    status: 'connected',
-    kind: 'classic',
-    address: OWNER,
-    label: 'Freighter',
+    status: 'connected', kind: 'classic', address: OWNER, label: 'Freighter',
   } as const;
-
   const passkeyState = {
-    status: 'connected',
-    kind: 'passkey',
-    address: 'CXYZSMARTACCOUNTCONTRACTID',
-    label: 'Passkey',
+    status: 'connected', kind: 'passkey', address: 'CXYZSMARTACCOUNTCONTRACTID', label: 'Passkey',
   } as const;
 
   it('refuses when no wallet is connected', async () => {
@@ -215,14 +222,11 @@ describe('submitCare wallet branching', () => {
   });
 
   it('routes classic wallets through tx.signAndSend (distinct hash)', async () => {
-    const hash = await cc.submitCare(0, 0, classicState as any);
-    // Different from passkey path's hash — proves the classic branch ran.
-    expect(hash).toBe('TXHASH_CLASSIC');
+    expect(await cc.submitCare(0, 0, classicState as any)).toBe('TXHASH_CLASSIC');
   });
 
-  it('signs through Smart Account Kit for passkey wallets', async () => {
-    const hash = await cc.submitCare(0, 0, passkeyState as any);
-    expect(hash).toBe('TXHASH_PASSKEY');
+  it('routes passkey wallets through SmartAccountKit.signAndSubmit', async () => {
+    expect(await cc.submitCare(0, 0, passkeyState as any)).toBe('TXHASH_PASSKEY');
     const wc = await import('./wallet-context');
     expect(wc.getPasskeyKit).toHaveBeenCalled();
   });
@@ -234,9 +238,28 @@ describe('submitConjoin', () => {
   });
 
   it('fetches latest drand round then submits for classic wallets', async () => {
-    const hash = await cc.submitConjoin(0, 1, {
-      status: 'connected', kind: 'classic', address: OWNER, label: 'Freighter',
-    } as any);
-    expect(hash).toBe('TXHASH_CLASSIC_CONJOIN');
+    expect(
+      await cc.submitConjoin(0, 1, { status: 'connected', kind: 'classic', address: OWNER, label: 'Freighter' } as any),
+    ).toBe('TXHASH_CLASSIC_CONJOIN');
+  });
+});
+
+describe('unwrapResult shape handling (audit High #5)', () => {
+  it('throws on Result::Err shape rather than silently returning undefined', async () => {
+    // Override dna_of to return Err
+    const errResult = { tag: 'Err' as const, values: [{ message: 'UnknownPlanet' }] };
+    const client = (await import('./planet-bindings/src/index')).Client;
+    const origDnaOf = (client.prototype as any).dna_of;
+    (client.prototype as any).dna_of = async () => ({ result: errResult });
+    try {
+      // seedPlanet so vitals/coords still work then poison dna_of:
+      seedPlanet(0, OWNER);
+      const p = await cc.getPlanet(0);
+      // getPlanet catches and returns null for any throw, including
+      // unwrapResult's new Err handling.
+      expect(p).toBeNull();
+    } finally {
+      (client.prototype as any).dna_of = origDnaOf;
+    }
   });
 });
