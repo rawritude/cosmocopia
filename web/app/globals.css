@@ -189,3 +189,84 @@ button.secondary {
   padding: 2px 6px;
   border-radius: 10px;
 }
+
+/* rarity tier badges */
+.rarityBadge {
+  display: inline-block;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  font-weight: 600;
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  cursor: help;
+  white-space: nowrap;
+}
+.rarityBadge--sm {
+  font-size: 9px;
+  padding: 2px 7px;
+}
+.rarityBadge--md {
+  font-size: 11px;
+  padding: 4px 10px;
+}
+/* Mystic gets a slow shimmer to advertise itself */
+.rarityBadge--mystic {
+  animation: rarityShimmer 2.4s ease-in-out infinite;
+}
+@keyframes rarityShimmer {
+  0%, 100% { box-shadow: 0 0 8px rgba(255,102,255,0.30); }
+  50%      { box-shadow: 0 0 18px rgba(255,102,255,0.65); }
+}
+.rarityBadge--legendary {
+  animation: legendShimmer 3.2s ease-in-out infinite;
+}
+@keyframes legendShimmer {
+  0%, 100% { box-shadow: 0 0 8px rgba(255,179,71,0.25); }
+  50%      { box-shadow: 0 0 14px rgba(255,179,71,0.55); }
+}
+.rarityRow {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  z-index: 1;
+}
+
+/* planet-view (surface) modal */
+.modal.planetView {
+  width: min(820px, 95vw);
+}
+.planetViewHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.planetViewCanvasWrap {
+  background: #000;
+  border-radius: 12px;
+  padding: 8px;
+  display: flex;
+  justify-content: center;
+  overflow: hidden;
+}
+.popBadge, .civBadge {
+  display: inline-block;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.15);
+  margin-right: 4px;
+}
+.civBadge {
+  background: rgba(176,106,255,0.10);
+  border-color: rgba(176,106,255,0.35);
+  color: #d6b8ff;
+}

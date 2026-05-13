@@ -7,3 +7,4 @@ dist/
 .env.local
 *.wasm
 .DS_Store
+web/tsconfig.tsbuildinfo

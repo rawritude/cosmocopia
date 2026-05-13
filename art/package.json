@@ -6,7 +6,7 @@
   "main": "src/index.ts",
   "scripts": {
     "render": "tsx src/cli.ts",
-    "test": "tsx --test src/render.test.ts",
+    "test": "tsx --test src/*.test.ts",
     "favicon": "tsx scripts/make-favicon.mjs"
   },
   "dependencies": {
