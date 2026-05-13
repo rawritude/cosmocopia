@@ -7,11 +7,12 @@ import type { WalletState } from './wallet-context';
 const RPC = process.env.NEXT_PUBLIC_STELLAR_RPC_URL!;
 const PASSPHRASE = process.env.NEXT_PUBLIC_STELLAR_NETWORK_PASSPHRASE!;
 const CONTRACT = process.env.NEXT_PUBLIC_PLANET_CONTRACT!;
-const DRAND = 'CAESC7SC5EW5P2P3IM5Q7E64ZNDATVSN5F57NTCH5E7GJRPDM76KF7QM';
 
-/// A read-only client. Simulations don't need a source account, but the
-/// generated bindings still want a syntactically-valid one — we use the
-/// Drand verifier as a stand-in for view-only flows.
+// Simulations still need a real ed25519 G-key as the source so the RPC can
+// fetch a sequence number. We use the deployer's account (already funded);
+// this is a *read-only* fallback — it never signs anything.
+const READ_SOURCE = 'GBVK7HKPHCELHPVFTJRMGRL5ROWQ4FOWTK4HC66SIGW5Y4ZBZP2OUR2Z';
+
 let _readClient: Client | null = null;
 export function readClient(): Client {
   if (!_readClient) {
@@ -19,7 +20,7 @@ export function readClient(): Client {
       contractId: CONTRACT,
       networkPassphrase: PASSPHRASE,
       rpcUrl: RPC,
-      publicKey: DRAND,
+      publicKey: READ_SOURCE,
       allowHttp: false,
     });
   }

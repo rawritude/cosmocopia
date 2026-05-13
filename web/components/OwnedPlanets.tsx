@@ -12,12 +12,24 @@ export default function OwnedPlanets() {
   const [err, setErr] = useState<string | null>(null);
   const [acting, setActing] = useState<{ id: number; action: CareName } | null>(null);
 
+  // `?view=<address>` lets the demo render any address's gallery without a
+  // wallet. Read client-side only to avoid SSR hydration mismatch — the
+  // server never knows about location.
+  const [previewAddr, setPreviewAddr] = useState<string | null>(null);
+  useEffect(() => {
+    setPreviewAddr(new URLSearchParams(window.location.search).get('view'));
+  }, []);
+
+  const effectiveAddress =
+    state.status === 'connected' ? state.address : previewAddr;
+  const isReadOnly = state.status !== 'connected';
+
   async function reload() {
-    if (state.status !== 'connected') return;
+    if (!effectiveAddress) return;
     setLoading(true);
     setErr(null);
     try {
-      const list = await listOwnedPlanets(state.address);
+      const list = await listOwnedPlanets(effectiveAddress);
       setPlanets(list);
     } catch (e: any) {
       setErr(e?.message ?? String(e));
@@ -27,26 +39,30 @@ export default function OwnedPlanets() {
   }
 
   useEffect(() => {
-    if (state.status !== 'connected') {
+    if (!effectiveAddress) {
       setPlanets(null);
       return;
     }
     reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.status === 'connected' ? state.address : null]);
+  }, [effectiveAddress]);
 
-  if (state.status !== 'connected') return null;
+  if (!effectiveAddress) return null;
 
   return (
     <div className="panel" style={{ marginBottom: 24 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-        <h2 style={{ margin: 0 }}>your cosmocopia</h2>
+        <h2 style={{ margin: 0 }}>
+          {isReadOnly ? 'preview' : 'your cosmocopia'}
+        </h2>
         <button className="secondary" onClick={reload} disabled={loading}>
           {loading ? 'refreshing…' : 'refresh'}
         </button>
       </div>
       <p className="note">
         Live read from contract <code>{process.env.NEXT_PUBLIC_PLANET_CONTRACT?.slice(0, 6)}…</code> on testnet.
+        {' '}Address: <code title={effectiveAddress!}>{effectiveAddress!.slice(0, 6)}…{effectiveAddress!.slice(-4)}</code>
+        {isReadOnly && ' · read-only preview (connect a wallet to take care actions)'}
       </p>
       {err && <p className="errBox">{err}</p>}
       {planets === null && !err && <p className="note">loading…</p>}
@@ -62,7 +78,12 @@ export default function OwnedPlanets() {
             <PlanetCard
               key={p.id}
               planet={p}
+              readOnly={isReadOnly}
               onCare={async (action) => {
+                if (isReadOnly) {
+                  setErr('Connect a wallet to take care actions.');
+                  return;
+                }
                 setActing({ id: p.id, action });
                 setErr(null);
                 try {
@@ -87,10 +108,12 @@ function PlanetCard({
   planet,
   onCare,
   acting,
+  readOnly,
 }: {
   planet: Planet;
   onCare: (action: CareName) => void;
   acting: CareName | null;
+  readOnly: boolean;
 }) {
   const v = planet.vitals;
   return (
@@ -112,7 +135,8 @@ function PlanetCard({
             key={a}
             className="secondary careBtn"
             onClick={() => onCare(a)}
-            disabled={acting !== null}
+            disabled={readOnly || acting !== null}
+            title={readOnly ? 'connect a wallet to take this action' : undefined}
           >
             {acting === a ? '…' : a.toLowerCase()}
           </button>
