@@ -14,9 +14,8 @@ use soroban_sdk::{
 };
 use stellar_tokens::non_fungible::{Base, NonFungibleToken};
 
-use crate::dna::DNA_LEN;
 use crate::drand::DrandClient;
-use crate::stats::{Care, Vitals, DECAY_PERIOD_LEDGERS, VITAL_MAX};
+use crate::stats::{Care, Vitals};
 
 #[contracttype]
 #[derive(Clone)]
@@ -272,7 +271,7 @@ impl PlanetContract {
     }
 }
 
-#[contractimpl]
+#[contractimpl(contracttrait)]
 impl NonFungibleToken for PlanetContract {
     type ContractType = Base;
 }
@@ -362,10 +361,3 @@ fn midpoint(a: (i32, i32), b: (i32, i32)) -> (i32, i32) {
     (((a.0 as i64 + b.0 as i64) / 2) as i32, ((a.1 as i64 + b.1 as i64) / 2) as i32)
 }
 
-// Silence "unused" lints for table constants pulled in via use statements
-#[allow(dead_code)]
-fn _retain_consts() {
-    let _ = DNA_LEN;
-    let _ = VITAL_MAX;
-    let _ = DECAY_PERIOD_LEDGERS;
-}
