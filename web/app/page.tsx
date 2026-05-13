@@ -68,7 +68,7 @@ function PageInner() {
       <div className="row" style={{ marginBottom: 32 }}>
         <div className="panel" style={{ flex: '0 0 auto' }}>
           <h2>tinker</h2>
-          {dna ? <PlanetSprite dna={dna} scale={4} /> : <div style={{ width: 256, height: 256, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--dim)' }}>invalid hex</div>}
+          {dna ? <PlanetSprite dna={dna} scale={4} /> : <div style={{ width: 256, height: 256, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--stardust)' }}>invalid hex</div>}
           <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
             <button onClick={() => setHex(dnaToHex(randomDna()))}>randomise</button>
             <button className="secondary" onClick={() => setHex(SHOWCASE_HEX[Math.floor(Math.random() * SHOWCASE_HEX.length)])}>showcase</button>
@@ -103,7 +103,7 @@ function PageInner() {
         })}
       </div>
 
-      <h2 style={{ marginTop: 40 }}>what&apos;s next</h2>
+      <h2 style={{ marginTop: 'var(--space-12)' }}>what&apos;s next</h2>
       <ul className="note">
         <li>Wire passkey signing path through <code>smart-account-kit.executeAndSubmit</code> so the care/conjoin buttons work for smart accounts too.</li>
         <li>Galaxy map: a scrollable canvas at <code>(x, y)</code> coords with sector colouring.</li>

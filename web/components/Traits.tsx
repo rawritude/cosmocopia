@@ -6,11 +6,11 @@ export default function Traits({ dna, coords }: { dna: Uint8Array; coords?: { x:
   const r = computeRarity({ dna: t, coords });
   return (
     <dl className="traits">
-      <dt>Tier</dt><dd><RarityBadge dna={dna} coords={coords} size="md" /> <span style={{color:'var(--dim)'}}>score {r.score}</span></dd>
+      <dt>Tier</dt><dd><RarityBadge dna={dna} coords={coords} size="md" /> <span style={{color:'var(--stardust)'}}>score {r.score}</span></dd>
       <dt>Class</dt><dd>{t.klass}</dd>
       <dt>Pattern</dt><dd>{t.pattern}</dd>
       <dt>Atmosphere</dt><dd>{t.atmosphere}</dd>
-      <dt>Feature</dt><dd>{t.feature} <span style={{color:'var(--dim)'}}>×{t.featureIntensity}</span></dd>
+      <dt>Feature</dt><dd>{t.feature} <span style={{color:'var(--stardust)'}}>×{t.featureIntensity}</span></dd>
       <dt>Rings</dt><dd>{t.ringsCount}</dd>
       <dt>Moons</dt><dd>{t.moonCount}</dd>
       <dt>Aura</dt><dd>{t.aura}</dd>
