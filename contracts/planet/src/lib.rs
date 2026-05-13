@@ -122,7 +122,9 @@ impl PlanetContract {
         }
         .publish(e);
 
-        e.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+        e.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Ok(token_id)
     }
 
@@ -186,8 +188,12 @@ impl PlanetContract {
             .set(&DataKey::Vitals(child_id), &starting);
 
         // Cooldown both parents.
-        e.storage().persistent().set(&DataKey::LastConjoin(parent_a), &now);
-        e.storage().persistent().set(&DataKey::LastConjoin(parent_b), &now);
+        e.storage()
+            .persistent()
+            .set(&DataKey::LastConjoin(parent_a), &now);
+        e.storage()
+            .persistent()
+            .set(&DataKey::LastConjoin(parent_b), &now);
 
         Conjoin {
             child: child_id,
@@ -272,7 +278,9 @@ impl PlanetContract {
     pub fn set_cooldown(e: &Env, ledgers: u32) -> Result<(), Error> {
         let admin = require_admin(e)?;
         admin.require_auth();
-        e.storage().instance().set(&DataKey::ConjoinCooldown, &ledgers);
+        e.storage()
+            .instance()
+            .set(&DataKey::ConjoinCooldown, &ledgers);
         Ok(())
     }
 }
@@ -364,6 +372,8 @@ fn check_cooldown(e: &Env, id: u32, now: u32) -> Result<(), Error> {
 }
 
 fn midpoint(a: (i32, i32), b: (i32, i32)) -> (i32, i32) {
-    (((a.0 as i64 + b.0 as i64) / 2) as i32, ((a.1 as i64 + b.1 as i64) / 2) as i32)
+    (
+        ((a.0 as i64 + b.0 as i64) / 2) as i32,
+        ((a.1 as i64 + b.1 as i64) / 2) as i32,
+    )
 }
-

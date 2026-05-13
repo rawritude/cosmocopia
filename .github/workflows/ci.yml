@@ -1,0 +1,89 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  contract:
+    name: Contract (build / fmt / clippy / test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contracts
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup target add wasm32v1-none
+          rustup component add rustfmt clippy
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            contracts/target
+          key: contract-${{ runner.os }}-${{ hashFiles('contracts/**/Cargo.lock', 'contracts/**/Cargo.toml') }}
+
+      - name: cargo fmt --check
+        run: cargo fmt --all -- --check
+
+      - name: cargo clippy
+        run: cargo clippy --all-targets --workspace -- -D warnings
+
+      - name: cargo test
+        run: cargo test --workspace
+
+      - name: stellar contract build
+        run: |
+          curl -fsSL https://github.com/stellar/stellar-cli/raw/main/install.sh | sh
+          export PATH="$HOME/.cargo/bin:$PATH"
+          stellar contract build
+
+      - name: Verify wasm size
+        run: |
+          size=$(stat -c%s target/wasm32v1-none/release/planet.wasm)
+          echo "wasm size: $size bytes"
+          # 64KB Soroban hard limit — fail well below.
+          if [ "$size" -gt 50000 ]; then
+            echo "WASM too large ($size > 50000)"
+            exit 1
+          fi
+
+  web:
+    name: Web (typecheck / build / art tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install workspace deps
+        run: npm ci --workspaces --include-workspace-root
+
+      - name: Art tests
+        run: npm --workspace @cosmocopia/art run test
+
+      - name: Build planet bindings (typecheck)
+        working-directory: web/lib/planet-bindings
+        run: npm install --silent && npx tsc --noEmit
+
+      - name: Web build
+        run: npm --workspace @cosmocopia/web run build
+        env:
+          NEXT_PUBLIC_STELLAR_RPC_URL: https://soroban-testnet.stellar.org
+          NEXT_PUBLIC_STELLAR_NETWORK_PASSPHRASE: Test SDF Network ; September 2015
+          NEXT_PUBLIC_SAK_ACCOUNT_WASM_HASH: 8537b8166c0078440a5324c12f6db48d6340d157c306a54c5ea81405abcc2611
+          NEXT_PUBLIC_SAK_WEBAUTHN_VERIFIER: CCMR63YE5T7MPWREF3PC5XNTTGXFSB4GYUGUIT5POHP2UGCS65TBIUUU
+          NEXT_PUBLIC_PLANET_CONTRACT: CCGFXO5TUAPYMUEPAPGYLOPCBRZLDJRLKVYDHQBLXUK37FJWTONQMPZD

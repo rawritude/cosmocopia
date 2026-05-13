@@ -77,7 +77,9 @@ pub fn project(stored: &Vitals, now: u32, class: u8, coords: (i32, i32)) -> Vita
         gravity: clamp_add(stored.gravity, (c.2 as i32 + s.2 as i32) * periods),
         biomass: clamp_add(stored.biomass, (c.3 as i32 + s.3 as i32) * periods),
         spirit: clamp_add(stored.spirit, (c.4 as i32 + s.4 as i32) * periods),
-        last_ledger: stored.last_ledger.saturating_add((periods as u32) * DECAY_PERIOD_LEDGERS),
+        last_ledger: stored
+            .last_ledger
+            .saturating_add((periods as u32) * DECAY_PERIOD_LEDGERS),
     }
 }
 

@@ -3,7 +3,9 @@
 extern crate std;
 
 use soroban_sdk::testutils::{Address as _, Ledger};
-use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, BytesN, Env, String, Symbol};
+use soroban_sdk::{
+    contract, contractimpl, contracttype, symbol_short, Address, BytesN, Env, String, Symbol,
+};
 
 use crate::{dna, galaxy, stats, Error, PlanetContract, PlanetContractClient};
 
@@ -75,7 +77,11 @@ fn setup(seed_byte: u8) -> Fixture {
     );
     let planet = PlanetContractClient::new(&env, &planet_id);
 
-    Fixture { env, drand_id, planet }
+    Fixture {
+        env,
+        drand_id,
+        planet,
+    }
 }
 
 fn set_drand(env: &Env, drand_id: &Address, round: u64, byte: u8) {
@@ -97,7 +103,10 @@ fn genesis_mint_writes_dna_and_vitals() {
     let dna_arr = f.planet.dna_of(&id).to_array();
     assert_eq!(dna_arr[dna::IDX_CLASS], 0xAB);
     assert_eq!(dna_arr[dna::IDX_GENERATION], 0);
-    assert_eq!(&dna_arr[dna::IDX_BIRTH_ROUND..dna::IDX_BIRTH_ROUND + 4], &[0, 0, 0, 1]);
+    assert_eq!(
+        &dna_arr[dna::IDX_BIRTH_ROUND..dna::IDX_BIRTH_ROUND + 4],
+        &[0, 0, 0, 1]
+    );
 
     let v = f.planet.vitals_of(&id);
     assert_eq!(v.temperature, 128);
@@ -139,7 +148,12 @@ fn conjoin_same_parent_fails() {
     let f = setup(0x22);
     let user = Address::generate(&f.env);
     let a = f.planet.mint_genesis(&user, &1u64, &0, &0);
-    let err = f.planet.try_conjoin(&a, &a, &user, &1u64).err().unwrap().unwrap();
+    let err = f
+        .planet
+        .try_conjoin(&a, &a, &user, &1u64)
+        .err()
+        .unwrap()
+        .unwrap();
     assert_eq!(err, Error::SameParent);
 }
 
@@ -154,7 +168,12 @@ fn conjoin_cooldown_blocks_then_clears() {
 
     let _ = f.planet.conjoin(&a, &b, &user, &1u64);
 
-    let err = f.planet.try_conjoin(&a, &c, &user, &1u64).err().unwrap().unwrap();
+    let err = f
+        .planet
+        .try_conjoin(&a, &c, &user, &1u64)
+        .err()
+        .unwrap()
+        .unwrap();
     assert_eq!(err, Error::OnCooldown);
 
     let current = f.env.ledger().sequence();

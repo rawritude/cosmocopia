@@ -23,4 +23,3 @@ pub fn sector_of(x: i32, y: i32) -> u8 {
         SECTOR_OUTER_DARK
     }
 }
-
