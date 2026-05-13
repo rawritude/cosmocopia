@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import PlanetSprite from './PlanetSprite';
-import { listOwnedPlanets, submitCare, CARE, type CareName, type Planet } from '../lib/cosmocopia';
+import { listOwnedPlanets, submitCare, submitConjoin, CARE, type CareName, type Planet } from '../lib/cosmocopia';
 import { useWallet } from '../lib/wallet-context';
 
 export default function OwnedPlanets() {
@@ -11,6 +11,17 @@ export default function OwnedPlanets() {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [acting, setActing] = useState<{ id: number; action: CareName } | null>(null);
+  const [conjoinMode, setConjoinMode] = useState(false);
+  const [picks, setPicks] = useState<number[]>([]);
+  const [conjoining, setConjoining] = useState(false);
+
+  function togglePick(id: number) {
+    setPicks((cur) => {
+      if (cur.includes(id)) return cur.filter((x) => x !== id);
+      if (cur.length >= 2) return [cur[1], id]; // sliding window of 2
+      return [...cur, id];
+    });
+  }
 
   // `?view=<address>` lets the demo render any address's gallery without a
   // wallet. Read client-side only to avoid SSR hydration mismatch — the
@@ -51,13 +62,45 @@ export default function OwnedPlanets() {
 
   return (
     <div className="panel" style={{ marginBottom: 24 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
         <h2 style={{ margin: 0 }}>
           {isReadOnly ? 'preview' : 'your cosmocopia'}
         </h2>
         <button className="secondary" onClick={reload} disabled={loading}>
           {loading ? 'refreshing…' : 'refresh'}
         </button>
+        {!isReadOnly && planets && planets.length >= 2 && (
+          <button
+            className="secondary"
+            onClick={() => {
+              setConjoinMode((m) => !m);
+              setPicks([]);
+            }}
+          >
+            {conjoinMode ? 'cancel conjoin' : 'conjoin two planets'}
+          </button>
+        )}
+        {conjoinMode && picks.length === 2 && (
+          <button
+            disabled={conjoining}
+            onClick={async () => {
+              setConjoining(true);
+              setErr(null);
+              try {
+                await submitConjoin(picks[0], picks[1], state);
+                setPicks([]);
+                setConjoinMode(false);
+                await reload();
+              } catch (e: any) {
+                setErr(e?.message ?? String(e));
+              } finally {
+                setConjoining(false);
+              }
+            }}
+          >
+            {conjoining ? 'conjoining…' : `conjoin #${picks[0]} + #${picks[1]} →`}
+          </button>
+        )}
       </div>
       <p className="note">
         Live read from contract <code>{process.env.NEXT_PUBLIC_PLANET_CONTRACT?.slice(0, 6)}…</code> on testnet.
@@ -72,6 +115,12 @@ export default function OwnedPlanets() {
           <code>scripts/deploy-testnet.sh</code> or invoke <code>mint_genesis</code> via the CLI.
         </p>
       )}
+      {conjoinMode && (
+        <p className="note">
+          Pick two parents. Child is born at the midpoint of their coords, with
+          DNA crossed-over from theirs + drand-driven mutation.
+        </p>
+      )}
       {planets && planets.length > 0 && (
         <div className="gallery">
           {planets.map((p) => (
@@ -79,6 +128,9 @@ export default function OwnedPlanets() {
               key={p.id}
               planet={p}
               readOnly={isReadOnly}
+              conjoinMode={conjoinMode}
+              picked={picks.includes(p.id)}
+              onPick={() => togglePick(p.id)}
               onCare={async (action) => {
                 if (isReadOnly) {
                   setErr('Connect a wallet to take care actions.');
@@ -109,17 +161,28 @@ function PlanetCard({
   onCare,
   acting,
   readOnly,
+  conjoinMode,
+  picked,
+  onPick,
 }: {
   planet: Planet;
   onCare: (action: CareName) => void;
   acting: CareName | null;
   readOnly: boolean;
+  conjoinMode: boolean;
+  picked: boolean;
+  onPick: () => void;
 }) {
   const v = planet.vitals;
   return (
-    <div className="card" style={{ textAlign: 'left' }}>
-      <div style={{ display: 'flex', justifyContent: 'center' }}>
+    <div
+      className={`card ${conjoinMode ? 'pickable' : ''} ${picked ? 'picked' : ''}`}
+      style={{ textAlign: 'left', cursor: conjoinMode ? 'pointer' : 'default' }}
+      onClick={conjoinMode ? onPick : undefined}
+    >
+      <div style={{ display: 'flex', justifyContent: 'center', position: 'relative' }}>
         <PlanetSprite dna={planet.dna} scale={3} />
+        {picked && <span className="pickBadge">picked</span>}
       </div>
       <div style={{ marginTop: 8, fontSize: 12, color: 'var(--dim)' }}>
         #{planet.id} · ({planet.coords.x}, {planet.coords.y})
@@ -129,19 +192,21 @@ function PlanetCard({
       <Vital label="🌑" v={v.gravity} />
       <Vital label="🌱" v={v.biomass} />
       <Vital label="✨" v={v.spirit} />
-      <div className="careRow">
-        {(['Warm', 'Rain', 'Tide', 'Tend', 'Reflect'] as CareName[]).map((a) => (
-          <button
-            key={a}
-            className="secondary careBtn"
-            onClick={() => onCare(a)}
-            disabled={readOnly || acting !== null}
-            title={readOnly ? 'connect a wallet to take this action' : undefined}
-          >
-            {acting === a ? '…' : a.toLowerCase()}
-          </button>
-        ))}
-      </div>
+      {!conjoinMode && (
+        <div className="careRow">
+          {(['Warm', 'Rain', 'Tide', 'Tend', 'Reflect'] as CareName[]).map((a) => (
+            <button
+              key={a}
+              className="secondary careBtn"
+              onClick={() => onCare(a)}
+              disabled={readOnly || acting !== null}
+              title={readOnly ? 'connect a wallet to take this action' : undefined}
+            >
+              {acting === a ? '…' : a.toLowerCase()}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

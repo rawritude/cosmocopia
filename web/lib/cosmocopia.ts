@@ -177,3 +177,90 @@ function extractHash(result: unknown): string {
     '',
   );
 }
+
+const DRAND_CONTRACT = 'CAESC7SC5EW5P2P3IM5Q7E64ZNDATVSN5F57NTCH5E7GJRPDM76KF7QM';
+
+/// Fetch the most recent drand round from the verifier. Used to pin a round
+/// for mint_genesis / conjoin so the read footprint is deterministic.
+export async function latestDrandRound(): Promise<bigint> {
+  const sdk = await import('@stellar/stellar-sdk');
+  const { Contract, TransactionBuilder, BASE_FEE, rpc, Address } = sdk;
+  const server = new rpc.Server(RPC, { allowHttp: false });
+  const account = await server.getAccount(READ_SOURCE);
+  const tx = new TransactionBuilder(account, {
+    fee: BASE_FEE,
+    networkPassphrase: PASSPHRASE,
+  })
+    .addOperation(new Contract(DRAND_CONTRACT).call('latest'))
+    .setTimeout(30)
+    .build();
+  const sim = await server.simulateTransaction(tx);
+  if ('error' in sim && sim.error) {
+    throw new Error(`drand latest() simulation failed: ${sim.error}`);
+  }
+  const result = (sim as any).result?.retval;
+  if (!result) throw new Error('drand latest() returned nothing');
+  // The retval is XDR — decode via stellar-sdk scValToNative.
+  const native = sdk.scValToNative(result);
+  // Shape: Option<[u64, BytesN<32>]> → either [round, bytes] tuple or null.
+  if (!Array.isArray(native)) throw new Error('unexpected drand result shape');
+  const round = native[0];
+  return typeof round === 'bigint' ? round : BigInt(round);
+}
+
+/// Conjoin two parents. Returns the tx hash.
+///
+/// The caller picks the drand round off-chain so simulate→submit stays
+/// footprint-stable; we fetch the current one right before submitting.
+export async function submitConjoin(
+  parentA: number,
+  parentB: number,
+  wallet: WalletState,
+): Promise<string> {
+  if (wallet.status !== 'connected') {
+    throw new Error('connect a wallet first');
+  }
+  const round = await latestDrandRound();
+
+  if (wallet.kind === 'passkey') {
+    const { getPasskeyKit } = await import('./wallet-context');
+    const kit = await getPasskeyKit();
+    const client = new Client({
+      contractId: CONTRACT,
+      networkPassphrase: PASSPHRASE,
+      rpcUrl: RPC,
+      publicKey: kit.deployerPublicKey,
+    });
+    const tx = await client.conjoin({
+      parent_a: parentA,
+      parent_b: parentB,
+      to: wallet.address,
+      round,
+    });
+    const result = await kit.signAndSubmit(tx);
+    return extractHash(result);
+  }
+
+  // Classic wallet
+  const swk = await import('@creit-tech/stellar-wallets-kit');
+  const client = new Client({
+    contractId: CONTRACT,
+    networkPassphrase: PASSPHRASE,
+    rpcUrl: RPC,
+    publicKey: wallet.address,
+    signTransaction: async (xdr: string) => {
+      return await swk.StellarWalletsKit.signTransaction(xdr, {
+        networkPassphrase: PASSPHRASE,
+        address: wallet.address,
+      });
+    },
+  });
+  const tx = await client.conjoin({
+    parent_a: parentA,
+    parent_b: parentB,
+    to: wallet.address,
+    round,
+  });
+  const sent = await tx.signAndSend();
+  return extractHash(sent);
+}
