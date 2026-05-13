@@ -41,15 +41,32 @@ PLANET=$(stellar contract deploy \
   --symbol  "PLN" 2>&1 | tail -1)
 echo "Planet contract: $PLANET"
 
-echo "--- seed 4 genesis planets ---"
+# -----------------------------------------------------------------------------
+# Commit-reveal seed: commit 4 genesis planets first, then sleep long enough
+# for the reveal delay (8 ledgers ≈ 40 s) AND for the target drand rounds
+# (observed + 10) to publish. 60 s is a safe margin.
+# -----------------------------------------------------------------------------
+echo "--- commit 4 genesis planets ---"
+COMMIT_IDS=()
 for coords in "0 0" "5 5" "-12 8" "30 -10"; do
   read -r x y <<<"$coords"
-  ROUND=$(stellar contract invoke --id "$DRAND" --source "$ID" --network testnet -- latest \
+  OBSERVED=$(stellar contract invoke --id "$DRAND" --source "$ID" --network testnet -- latest \
     2>&1 | tail -1 | python3 -c "import sys,json; print(json.loads(sys.stdin.read())[0])")
-  echo "  ($x, $y) round=$ROUND"
+  echo "  ($x, $y) observed_round=$OBSERVED"
+  CID=$(stellar contract invoke --id "$PLANET" --source "$ID" --network testnet --send=yes -- \
+    commit_genesis --to "$DEPLOYER" --observed_round "$OBSERVED" --x "$x" --y "$y" \
+    2>&1 | grep -E "^[0-9]+" | tail -1)
+  COMMIT_IDS+=("$CID")
+  echo "    commitment_id=$CID"
+done
+
+echo "--- wait ~60s for reveal delay + drand publications ---"
+sleep 60
+
+echo "--- reveal all 4 commitments ---"
+for CID in "${COMMIT_IDS[@]}"; do
   stellar contract invoke --id "$PLANET" --source "$ID" --network testnet --send=yes -- \
-    mint_genesis --to "$DEPLOYER" --round "$ROUND" --x "$x" --y "$y" \
-    2>&1 | grep -E "token_id" | head -1
+    reveal_genesis --commitment_id "$CID" 2>&1 | grep -E "token_id" | head -1
 done
 
 # Pin the contract id into the web env so the frontend can find it.
