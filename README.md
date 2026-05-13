@@ -2,6 +2,10 @@
 
 > Tiny pixel-art worlds, on-chain on Stellar. Conjoin two planets — get a new one. Care for them or they wither.
 
+![Cosmocopia](docs/screenshot.png)
+
+*Live read from the testnet contract — the top "preview" row shows five planets owned by the deployer: tokens 0–3 are the genesis batch minted via Drand-Relay verified randomness, and #4 is the child born from conjoining tokens 0 and 1. Per-card vitals bars come from `vitals_of` on chain. Below that, the tinker panel renders any 32-byte DNA you paste, and the genesis gallery shows fixed-seed showcase planets that span the class space.*
+
 Cosmocopia is an Axie-style collection-of-creatures project, but instead of monsters they are **planets**: each a 96×96 pixel art world programmatically rendered from on-chain DNA, born from drand-verified randomness on Stellar/Soroban.
 
 The deliberate non-goal: no game / no PvP / no economy beyond mint + conjoin + care. The fun lives in the genetics, the art, and the galaxy map.
