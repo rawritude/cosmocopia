@@ -230,36 +230,99 @@ export async function latestDrandRound(): Promise<bigint> {
   return typeof round === 'bigint' ? round : BigInt(round);
 }
 
-/// Conjoin two parents. Returns the tx hash. The new contract enforces
-/// `to ∈ {owner_a, owner_b}` (audit High #1).
+// ---------------------------------------------------------------------------
+// Commit-reveal flow for conjoin (audit Critical #1/#2)
+//
+// The contract no longer accepts a direct `conjoin(round)` — it requires the
+// caller to commit to a future drand round, wait MIN_REVEAL_DELAY_LEDGERS
+// (~40 s), then reveal. submitConjoin orchestrates this in one function call
+// by signing two transactions back-to-back with a poll loop in between.
+// ---------------------------------------------------------------------------
+
+// Match the contract's compile-time constants. If these change in the
+// contract, bump them here.
+export const COMMIT_LOOKAHEAD_ROUNDS = 10n;
+
+export type ConjoinProgress =
+  | { phase: 'committing' }
+  | { phase: 'waiting'; commitmentId: number; revealAfterLedger: number; currentLedger: number }
+  | { phase: 'revealing'; commitmentId: number }
+  | { phase: 'done'; childTxHash: string };
+
+/// Drive the commit-reveal flow end-to-end. `onProgress` is called for each
+/// phase so the UI can show status; pass `signal` to allow user cancellation.
 export async function submitConjoin(
   parentA: number,
   parentB: number,
   wallet: WalletState,
+  onProgress?: (p: ConjoinProgress) => void,
 ): Promise<string> {
   if (wallet.status !== 'connected') throw new Error('connect a wallet first');
-  const round = await latestDrandRound();
 
+  // Phase 1: commit
+  onProgress?.({ phase: 'committing' });
+  const observedRound = await latestDrandRound();
+  const commitmentId = await submitCommitConjoin(parentA, parentB, observedRound, wallet);
+
+  // Phase 2: poll revealAfter until the ledger has advanced past it.
+  const revealAfter = await fetchRevealAfter(commitmentId);
+  while (true) {
+    const cur = await fetchCurrentLedger();
+    onProgress?.({ phase: 'waiting', commitmentId, revealAfterLedger: revealAfter, currentLedger: cur });
+    if (cur >= revealAfter) break;
+    await sleep(3000);
+  }
+
+  // Phase 3: reveal
+  onProgress?.({ phase: 'revealing', commitmentId });
+  const txHash = await submitRevealConjoin(commitmentId, wallet);
+  onProgress?.({ phase: 'done', childTxHash: txHash });
+  return txHash;
+}
+
+/// Just the commit half — useful for tests and for UIs that want to defer
+/// the reveal until later.
+export async function submitCommitConjoin(
+  parentA: number,
+  parentB: number,
+  observedRound: bigint,
+  wallet: WalletState,
+): Promise<number> {
+  if (wallet.status !== 'connected') throw new Error('connect a wallet first');
+  const tx = await (await writerClient(wallet)).commit_conjoin({
+    parent_a: parentA,
+    parent_b: parentB,
+    to: wallet.address,
+    observed_round: observedRound,
+  });
+  const result = await sendTx(tx, wallet);
+  // commitment_id is the function's return value. The bindings expose it
+  // via `result.returnValue` after sign-and-send.
+  const value = (result as any)?.result;
+  return typeof value === 'number' ? value : Number(value ?? 0);
+}
+
+/// Just the reveal half.
+export async function submitRevealConjoin(commitmentId: number, wallet: WalletState): Promise<string> {
+  if (wallet.status !== 'connected') throw new Error('connect a wallet first');
+  const tx = await (await writerClient(wallet)).reveal_conjoin({ commitment_id: commitmentId });
+  return extractHash(await sendTx(tx, wallet));
+}
+
+async function writerClient(wallet: WalletState) {
+  if (wallet.status !== 'connected') throw new Error('not connected');
   if (wallet.kind === 'passkey') {
     const { getPasskeyKit } = await import('./wallet-context');
     const kit = await getPasskeyKit();
-    const client = new Client({
+    return new Client({
       contractId: CONTRACT,
       networkPassphrase: PASSPHRASE,
       rpcUrl: RPC,
       publicKey: kit.deployerPublicKey,
     });
-    const tx = await client.conjoin({
-      parent_a: parentA,
-      parent_b: parentB,
-      to: wallet.address,
-      round,
-    });
-    return extractHash(await kit.signAndSubmit(tx));
   }
-
   const swk = await import('@creit-tech/stellar-wallets-kit');
-  const client = new Client({
+  return new Client({
     contractId: CONTRACT,
     networkPassphrase: PASSPHRASE,
     rpcUrl: RPC,
@@ -270,11 +333,28 @@ export async function submitConjoin(
         address: wallet.address,
       }),
   });
-  const tx = await client.conjoin({
-    parent_a: parentA,
-    parent_b: parentB,
-    to: wallet.address,
-    round,
-  });
-  return extractHash(await tx.signAndSend());
 }
+
+async function sendTx(tx: any, wallet: WalletState): Promise<unknown> {
+  if (wallet.status !== 'connected') throw new Error('not connected');
+  if (wallet.kind === 'passkey') {
+    const { getPasskeyKit } = await import('./wallet-context');
+    const kit = await getPasskeyKit();
+    return kit.signAndSubmit(tx);
+  }
+  return tx.signAndSend();
+}
+
+async function fetchRevealAfter(commitmentId: number): Promise<number> {
+  const r = await readClient().reveal_after({ commitment_id: commitmentId });
+  return Number(unwrapResult<number>(r.result));
+}
+
+async function fetchCurrentLedger(): Promise<number> {
+  const sdk = await import('@stellar/stellar-sdk');
+  const server = new sdk.rpc.Server(RPC, { allowHttp: false });
+  const latest = await server.getLatestLedger();
+  return latest.sequence;
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));

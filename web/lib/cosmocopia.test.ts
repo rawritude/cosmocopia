@@ -51,8 +51,21 @@ vi.mock('./planet-bindings/src/index', () => {
       async care(_args: any) {
         return { signAndSend: async () => ({ hash: 'TXHASH_CLASSIC' }) };
       }
-      async conjoin(_args: any) {
-        return { signAndSend: async () => ({ hash: 'TXHASH_CLASSIC_CONJOIN' }) };
+      async commit_conjoin(_args: any) {
+        return { signAndSend: async () => ({ result: 42, hash: 'TXHASH_COMMIT' }) };
+      }
+      async reveal_conjoin(_args: any) {
+        return { signAndSend: async () => ({ hash: 'TXHASH_REVEAL' }) };
+      }
+      async reveal_after(_args: any) {
+        // Return Ok(0) — reveal-after-ledger == 0 means already revealable.
+        return { result: { tag: 'Ok' as const, values: [0] } };
+      }
+      async commit_genesis(_args: any) {
+        return { signAndSend: async () => ({ result: 1, hash: 'TXHASH_COMMIT_GENESIS' }) };
+      }
+      async reveal_genesis(_args: any) {
+        return { signAndSend: async () => ({ hash: 'TXHASH_REVEAL_GENESIS' }) };
       }
     },
   };
@@ -87,6 +100,7 @@ vi.mock('@stellar/stellar-sdk', () => {
       async simulateTransaction(_tx: any) {
         return { result: { retval: 'RETVAL' } };
       }
+      async getLatestLedger() { return { sequence: 9_999_999 }; }
     },
   };
   return {
@@ -232,15 +246,28 @@ describe('submitCare wallet branching', () => {
   });
 });
 
-describe('submitConjoin', () => {
+describe('submitConjoin (commit-reveal)', () => {
   it('refuses when not connected', async () => {
     await expect(cc.submitConjoin(0, 1, { status: 'idle' } as any)).rejects.toThrow(/connect a wallet/i);
   });
 
-  it('fetches latest drand round then submits for classic wallets', async () => {
-    expect(
-      await cc.submitConjoin(0, 1, { status: 'connected', kind: 'classic', address: OWNER, label: 'Freighter' } as any),
-    ).toBe('TXHASH_CLASSIC_CONJOIN');
+  it('orchestrates commit → wait → reveal and returns the reveal tx hash', async () => {
+    const phases: string[] = [];
+    const wallet = { status: 'connected', kind: 'classic', address: OWNER, label: 'Freighter' } as any;
+    const hash = await cc.submitConjoin(0, 1, wallet, (p) => phases.push(p.phase));
+    expect(hash).toBe('TXHASH_REVEAL');
+    // committing → waiting → revealing → done
+    expect(phases[0]).toBe('committing');
+    expect(phases).toContain('revealing');
+    expect(phases.at(-1)).toBe('done');
+  });
+
+  it('exposes submitCommitConjoin / submitRevealConjoin as separate halves', async () => {
+    const wallet = { status: 'connected', kind: 'classic', address: OWNER, label: 'Freighter' } as any;
+    const id = await cc.submitCommitConjoin(0, 1, 42n, wallet);
+    expect(typeof id).toBe('number');
+    const hash = await cc.submitRevealConjoin(id, wallet);
+    expect(hash).toBe('TXHASH_REVEAL');
   });
 });
 

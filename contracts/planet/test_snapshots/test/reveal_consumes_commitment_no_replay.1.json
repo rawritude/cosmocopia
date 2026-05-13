@@ -37,8 +37,6 @@
       ]
     ],
     [],
-    [],
-    [],
     []
   ],
   "ledger": {
@@ -105,7 +103,7 @@
                               "symbol": "value"
                             },
                             "val": {
-                              "bytes": "abababababababababababababababababababababababababababababababab"
+                              "bytes": "d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0"
                             }
                           }
                         ]
@@ -200,7 +198,7 @@
               },
               "durability": "persistent",
               "val": {
-                "bytes": "abababababababab000000000000006e00ababababababababababababababab"
+                "bytes": "d0d0d0d0d0d0d0d0000000000000006e00d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0"
               }
             }
           },
@@ -287,7 +285,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 518408
+        "live_until": 4103
       },
       {
         "entry": {

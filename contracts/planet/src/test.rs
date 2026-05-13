@@ -104,16 +104,13 @@ fn mint_genesis(f: &Fixture, to: &Address, x: i32, y: i32) -> u32 {
 /// parents-owned-by-`to` setup. Drives ledger forward to satisfy the reveal
 /// delay.
 fn conjoin(f: &Fixture, parent_a: u32, parent_b: u32, to: &Address) -> u32 {
-    let id = f
-        .planet
-        .commit_conjoin(&parent_a, &parent_b, to, &200u64);
+    let id = f.planet.commit_conjoin(&parent_a, &parent_b, to, &200u64);
     let now = f.env.ledger().sequence();
     f.env
         .ledger()
         .set_sequence_number(now + crate::MIN_REVEAL_DELAY_LEDGERS);
     f.planet.reveal_conjoin(&id)
 }
-
 
 // ---------- Tests ----------
 
@@ -129,9 +126,10 @@ fn genesis_mint_writes_dna_and_vitals() {
     let dna_arr = f.planet.dna_of(&id).to_array();
     assert_eq!(dna_arr[dna::IDX_CLASS], 0xAB);
     assert_eq!(dna_arr[dna::IDX_GENERATION], 0);
+    // Birth round = observed (100) + LOOKAHEAD (10) per the commit-reveal flow.
     assert_eq!(
         &dna_arr[dna::IDX_BIRTH_ROUND..dna::IDX_BIRTH_ROUND + 4],
-        &[0, 0, 0, 1]
+        &[0, 0, 0, 110]
     );
 
     let v = f.planet.vitals_of(&id);
@@ -550,4 +548,84 @@ fn enumerable_views_present_via_trait() {
     assert_eq!(f.planet.get_token_id(&1), 1);
     assert_eq!(f.planet.get_owner_token_id(&user, &0), 0);
     assert_eq!(f.planet.get_owner_token_id(&user, &1), 1);
+}
+
+// =============================================================================
+//  Commit-reveal flow tests (audit Critical #1/#2)
+// =============================================================================
+
+#[test]
+fn reveal_genesis_rejects_when_too_soon() {
+    let f = setup(0xA0);
+    let user = Address::generate(&f.env);
+    let id = f.planet.commit_genesis(&user, &100u64, &0i32, &0i32);
+    // Don't advance the ledger — should reject with CommitmentNotReady.
+    let err = f.planet.try_reveal_genesis(&id).err().unwrap().unwrap();
+    assert_eq!(err, Error::CommitmentNotReady);
+}
+
+#[test]
+fn reveal_conjoin_rejects_when_too_soon() {
+    let f = setup(0xB0);
+    let user = Address::generate(&f.env);
+    let a = mint_genesis(&f, &user, 0, 0);
+    let b = mint_genesis(&f, &user, 1, 1);
+    let id = f.planet.commit_conjoin(&a, &b, &user, &200u64);
+    let err = f.planet.try_reveal_conjoin(&id).err().unwrap().unwrap();
+    assert_eq!(err, Error::CommitmentNotReady);
+}
+
+#[test]
+fn commitment_storage_round_trips() {
+    let f = setup(0xC0);
+    let user = Address::generate(&f.env);
+    let id = f.planet.commit_genesis(&user, &500u64, &7i32, &-3i32);
+    let c = f.planet.commitment_of(&id);
+    assert_eq!(c.committer, f.planet.admin());
+    assert_eq!(c.to, user);
+    assert_eq!(c.target_round, 500 + crate::LOOKAHEAD_ROUNDS);
+    match c.kind {
+        crate::CommitmentKind::Genesis(x, y) => assert_eq!((x, y), (7, -3)),
+        _ => panic!("expected Genesis kind"),
+    }
+    let reveal_after = f.planet.reveal_after(&id);
+    assert_eq!(
+        reveal_after,
+        c.commit_ledger + crate::MIN_REVEAL_DELAY_LEDGERS
+    );
+}
+
+#[test]
+fn reveal_consumes_commitment_no_replay() {
+    let f = setup(0xD0);
+    let user = Address::generate(&f.env);
+    let id = f.planet.commit_genesis(&user, &100u64, &0i32, &0i32);
+    let now = f.env.ledger().sequence();
+    f.env
+        .ledger()
+        .set_sequence_number(now + crate::MIN_REVEAL_DELAY_LEDGERS);
+    let _ = f.planet.reveal_genesis(&id);
+    // Second reveal of the same commitment fails: it's been removed.
+    let err = f.planet.try_reveal_genesis(&id).err().unwrap().unwrap();
+    assert_eq!(err, Error::UnknownCommitment);
+}
+
+#[test]
+fn commit_genesis_rejects_non_admin() {
+    let f = raw_setup();
+    let bystander = Address::generate(&f.env);
+    let err = f
+        .planet
+        .mock_auths(&[MockAuth {
+            address: &bystander,
+            invoke: &soroban_sdk::testutils::MockAuthInvoke {
+                contract: &f.planet.address,
+                fn_name: "commit_genesis",
+                args: (bystander.clone(), 100u64, 0i32, 0i32).into_val(&f.env),
+                sub_invokes: &[],
+            },
+        }])
+        .try_commit_genesis(&bystander, &100u64, &0, &0)
+        .err();
+    assert!(err.is_some(), "commit_genesis should reject non-admin");
 }

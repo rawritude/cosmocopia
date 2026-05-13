@@ -34,7 +34,7 @@ if (typeof window !== "undefined") {
 export const networks = {
   testnet: {
     networkPassphrase: "Test SDF Network ; September 2015",
-    contractId: "CCV2FVBG4Q7HXM3NYS7GA5QMDGU5474HF6WKW6Y6KOW74QN453ZGRJTX",
+    contractId: "CAN2QTAWXO3GR3H4H5HZRMAPPRAUBDBQHOB35373NHANAMQ47YKJPCPJ",
   }
 } as const
 
@@ -49,12 +49,31 @@ export const Errors = {
   7: {message:"InvalidCareAction"},
   8: {message:"Unhealthy"},
   9: {message:"RecipientNotParentOwner"},
-  10: {message:"CooldownOutOfRange"}
+  10: {message:"CooldownOutOfRange"},
+  11: {message:"UnknownCommitment"},
+  12: {message:"CommitmentNotReady"},
+  13: {message:"InvalidCommitmentKind"}
 }
 
 
 
 
+
+
+export interface Commitment {
+  commit_ledger: u32;
+  committer: string;
+  kind: CommitmentKind;
+  target_round: u64;
+  to: string;
+}
+
+
+/**
+ * Tuple variants are required by Soroban's #[contracttype] enum encoding.
+ * `Genesis(x, y)` and `Conjoin(parent_a, parent_b)`.
+ */
+export type CommitmentKind = {tag: "Genesis", values: readonly [i32, i32]} | {tag: "Conjoin", values: readonly [u32, u32]};
 
 
 /**
@@ -160,16 +179,6 @@ export interface Client {
    * * `account` - The address for which the balance is being queried.
    */
   balance: ({account}: {account: string}, options?: MethodOptions) => Promise<AssembledTransaction<u32>>
-
-  /**
-   * Construct and simulate a conjoin transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   * Conjoin two parents the caller owns. Mints a child whose DNA is a
-   * per-byte crossover with mutation. Both parents go on cooldown.
-   * 
-   * `to` must be one of the parents' owners — preventing minting children
-   * onto unrelated addresses (audit High #1).
-   */
-  conjoin: ({parent_a, parent_b, to, round}: {parent_a: u32, parent_b: u32, to: string, round: u64}, options?: MethodOptions) => Promise<AssembledTransaction<Result<u32>>>
 
   /**
    * Construct and simulate a migrate transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
@@ -310,16 +319,12 @@ export interface Client {
   get_token_id: ({index}: {index: u32}, options?: MethodOptions) => Promise<AssembledTransaction<u32>>
 
   /**
-   * Construct and simulate a mint_genesis transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   * Admin-only: mint a genesis planet at coords (x, y) using drand round `round`.
-   * 
-   * The caller picks a concrete drand round so the read footprint is
-   * deterministic between simulate and submit. Calling `latest()` inside
-   * the contract would race the ever-advancing verifier state.
-   * **Note:** until commit-reveal lands (v2), the caller can grind by
-   * picking favorable rounds — see audit Critical #1/#2.
+   * Construct and simulate a reveal_after transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   * View: at which ledger does `commitment_id` become revealable. Returns
+   * `commit_ledger + MIN_REVEAL_DELAY_LEDGERS`. Frontend can compare to
+   * the current ledger to decide whether to enable a "reveal" button.
    */
-  mint_genesis: ({to, round, x, y}: {to: string, round: u64, x: i32, y: i32}, options?: MethodOptions) => Promise<AssembledTransaction<Result<u32>>>
+  reveal_after: ({commitment_id}: {commitment_id: u32}, options?: MethodOptions) => Promise<AssembledTransaction<Result<u32>>>
 
   /**
    * Construct and simulate a set_cooldown transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
@@ -335,6 +340,12 @@ export interface Client {
    * * `e` - Access to the Soroban environment.
    */
   total_supply: (options?: MethodOptions) => Promise<AssembledTransaction<u32>>
+
+  /**
+   * Construct and simulate a commitment_of transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   * Returns the stored commitment so a watcher can show pending state.
+   */
+  commitment_of: ({commitment_id}: {commitment_id: u32}, options?: MethodOptions) => Promise<AssembledTransaction<Result<Commitment>>>
 
   /**
    * Construct and simulate a transfer_from transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
@@ -372,9 +383,45 @@ export interface Client {
   transfer_from: ({spender, from, to, token_id}: {spender: string, from: string, to: string, token_id: u32}, options?: MethodOptions) => Promise<AssembledTransaction<null>>
 
   /**
+   * Construct and simulate a commit_conjoin transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   * Commit to conjoining two parents. Same anti-grinding flow as
+   * commit_genesis: target_round is pinned to a future drand round so
+   * the user can't peek the seed at commit time.
+   * 
+   * `to` must be one of the parents' owners (audit High #1).
+   */
+  commit_conjoin: ({parent_a, parent_b, to, observed_round}: {parent_a: u32, parent_b: u32, to: string, observed_round: u64}, options?: MethodOptions) => Promise<AssembledTransaction<Result<u32>>>
+
+  /**
+   * Construct and simulate a commit_genesis transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   * Admin-only: commit to a genesis mint. `observed_round` is the
+   * caller's view of the current drand round; the contract stores
+   * `target_round = observed_round + LOOKAHEAD_ROUNDS`. Reveal can land
+   * after MIN_REVEAL_DELAY_LEDGERS ledgers, at which point the target
+   * round's randomness exists and the user could not have predicted it
+   * at commit time. Closes audit Critical #1/#2 (DNA grinding).
+   */
+  commit_genesis: ({to, observed_round, x, y}: {to: string, observed_round: u64, x: i32, y: i32}, options?: MethodOptions) => Promise<AssembledTransaction<Result<u32>>>
+
+  /**
    * Construct and simulate a drand_verifier transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
    */
   drand_verifier: (options?: MethodOptions) => Promise<AssembledTransaction<string>>
+
+  /**
+   * Construct and simulate a reveal_conjoin transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   * Reveal a previously committed conjoin. Anyone can call.
+   */
+  reveal_conjoin: ({commitment_id}: {commitment_id: u32}, options?: MethodOptions) => Promise<AssembledTransaction<Result<u32>>>
+
+  /**
+   * Construct and simulate a reveal_genesis transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   * Reveal a previously committed genesis mint. Anyone can call (the
+   * commitment carries the recipient) — but reveal will fail if the
+   * minimum reveal delay hasn't passed or the drand round still isn't
+   * available.
+   */
+  reveal_genesis: ({commitment_id}: {commitment_id: u32}, options?: MethodOptions) => Promise<AssembledTransaction<Result<u32>>>
 
   /**
    * Construct and simulate a approve_for_all transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
@@ -457,10 +504,12 @@ export class Client extends ContractClient {
   constructor(public readonly options: ContractClientOptions) {
     super(
       new ContractSpec([ "AAAABQAAAbtFbWl0dGVkIG9uIGV2ZXJ5IG5ldyBwbGFuZXQgY3JlYXRpb24gKGJvdGggZ2VuZXNpcyBtaW50IGFuZCBjb25qb2luCmNoaWxkKS4gQ29tcGxlbWVudHMg4oCUIGRvZXMgbm90IHJlcGxhY2Ug4oCUIHRoZSBPcGVuWmVwcGVsaW4gYE1pbnRgIGV2ZW50CnRoYXQgYHNlcXVlbnRpYWxfbWludGAgZmlyZXMgZm9yIGFueSBORlQgaW5kZXhlci4gYEJvcm5gIGNhcnJpZXMKQ29zbW9jb3BpYS1zcGVjaWZpYyBnZW5ldGljczogd2hpY2ggZHJhbmQgcm91bmQgc2VlZGVkIHRoZSBETkEgYW5kIGhvdwptYW55IGdlbmVyYXRpb25zIGRlZXAgdGhlIGxpbmVhZ2UgaXMuCgpPd25lciBpcyBpbiB0aGUgdG9waWMgdmVjdG9yIHNvIGluZGV4ZXJzIGNhbiBmaWx0ZXIgImFsbCBwbGFuZXRzIGJvcm4gdG8KYWRkcmVzcyBYIiB3aXRob3V0IHNjYW5uaW5nIHRoZSBlbnRpcmUgZXZlbnQgc3RyZWFtLgAAAAAAAAAABEJvcm4AAAABAAAABGJvcm4AAAAEAAAAAAAAAAVvd25lcgAAAAAAABMAAAABAAAAAAAAAAJpZAAAAAAABAAAAAAAAAAAAAAACmdlbmVyYXRpb24AAAAAAAQAAAAAAAAAAAAAAAtkcmFuZF9yb3VuZAAAAAAGAAAAAAAAAAI=",
-        "AAAABAAAAAAAAAAAAAAABUVycm9yAAAAAAAACgAAAAAAAAAITm90QWRtaW4AAAABAAAAAAAAAAhOb3RPd25lcgAAAAIAAAAAAAAAEERyYW5kVW5hdmFpbGFibGUAAAADAAAAAAAAAA1Vbmtub3duUGxhbmV0AAAAAAAABAAAAAAAAAAKU2FtZVBhcmVudAAAAAAABQAAAAAAAAAKT25Db29sZG93bgAAAAAABgAAAAAAAAARSW52YWxpZENhcmVBY3Rpb24AAAAAAAAHAAAAAAAAAAlVbmhlYWx0aHkAAAAAAAAIAAAAAAAAABdSZWNpcGllbnROb3RQYXJlbnRPd25lcgAAAAAJAAAAAAAAABJDb29sZG93bk91dE9mUmFuZ2UAAAAAAAo=",
+        "AAAABAAAAAAAAAAAAAAABUVycm9yAAAAAAAADQAAAAAAAAAITm90QWRtaW4AAAABAAAAAAAAAAhOb3RPd25lcgAAAAIAAAAAAAAAEERyYW5kVW5hdmFpbGFibGUAAAADAAAAAAAAAA1Vbmtub3duUGxhbmV0AAAAAAAABAAAAAAAAAAKU2FtZVBhcmVudAAAAAAABQAAAAAAAAAKT25Db29sZG93bgAAAAAABgAAAAAAAAARSW52YWxpZENhcmVBY3Rpb24AAAAAAAAHAAAAAAAAAAlVbmhlYWx0aHkAAAAAAAAIAAAAAAAAABdSZWNpcGllbnROb3RQYXJlbnRPd25lcgAAAAAJAAAAAAAAABJDb29sZG93bk91dE9mUmFuZ2UAAAAAAAoAAAAAAAAAEVVua25vd25Db21taXRtZW50AAAAAAAACwAAAAAAAAASQ29tbWl0bWVudE5vdFJlYWR5AAAAAAAMAAAAAAAAABVJbnZhbGlkQ29tbWl0bWVudEtpbmQAAAAAAAAN",
         "AAAABQAAAAAAAAAAAAAABUNhcmVkAAAAAAAAAQAAAARjYXJlAAAAAgAAAAAAAAACaWQAAAAAAAQAAAAAAAAAAAAAAAZhY3Rpb24AAAAAAAQAAAAAAAAAAg==",
         "AAAABQAAAAAAAAAAAAAABU1vdmVkAAAAAAAAAQAAAAVtb3ZlZAAAAAAAAAMAAAAAAAAAAmlkAAAAAAAEAAAAAAAAAAAAAAABeAAAAAAAAAUAAAAAAAAAAAAAAAF5AAAAAAAABQAAAAAAAAAC",
         "AAAABQAAAAAAAAAAAAAAB0NvbmpvaW4AAAAAAQAAAAdjb25qb2luAAAAAAQAAAAAAAAABWNoaWxkAAAAAAAABAAAAAAAAAAAAAAACHBhcmVudF9hAAAABAAAAAAAAAAAAAAACHBhcmVudF9iAAAABAAAAAAAAAAAAAAAC2RyYW5kX3JvdW5kAAAAAAYAAAAAAAAAAg==",
+        "AAAABQAAAMhFbWl0dGVkIGF0IGNvbW1pdCB0aW1lIHNvIHRoZSBmcm9udGVuZCBjYW4gc2hvdyBwZW5kaW5nIGNvbW1pdG1lbnRzIGFuZAprbm93IHdoZW4gdGhleSBiZWNvbWUgcmV2ZWFsYWJsZS4gYHRhcmdldF9yb3VuZGAgbGV0cyBhIHdhdGNoZXIgcG9sbCB0aGUKZHJhbmQgdmVyaWZpZXIgdG8gc2VlIGlmIHJhbmRvbW5lc3MgaGFzIGJlZW4gcHVibGlzaGVkLgAAAAAAAAAJQ29tbWl0dGVkAAAAAAAAAQAAAAljb21taXR0ZWQAAAAAAAAEAAAAAAAAAAljb21taXR0ZXIAAAAAAAATAAAAAQAAAAAAAAANY29tbWl0bWVudF9pZAAAAAAAAAQAAAAAAAAAAAAAAAx0YXJnZXRfcm91bmQAAAAGAAAAAAAAAAAAAAATcmV2ZWFsX2FmdGVyX2xlZGdlcgAAAAAEAAAAAAAAAAI=",
+        "AAAAAQAAAAAAAAAAAAAACkNvbW1pdG1lbnQAAAAAAAUAAAAAAAAADWNvbW1pdF9sZWRnZXIAAAAAAAAEAAAAAAAAAAljb21taXR0ZXIAAAAAAAATAAAAAAAAAARraW5kAAAH0AAAAA5Db21taXRtZW50S2luZAAAAAAAAAAAAAx0YXJnZXRfcm91bmQAAAAGAAAAAAAAAAJ0bwAAAAAAEw==",
         "AAAAAAAAAGRBcHBseSBhIGNhcmUgYWN0aW9uLiBDYWxsZXIgbXVzdCBvd24gdGhlIHBsYW5ldC4gRXh0ZW5kcyB0aGUgcGxhbmV0J3MKVFRMIOKAlCBzZWUgYXVkaXQgQ3JpdGljYWwgIzQuAAAABGNhcmUAAAACAAAAAAAAAAJpZAAAAAAABAAAAAAAAAAGYWN0aW9uAAAAAAAEAAAAAQAAA+kAAAACAAAAAw==",
         "AAAAAAAAAFtSZXR1cm5zIHRoZSB0b2tlbiBjb2xsZWN0aW9uIG5hbWUuCgojIEFyZ3VtZW50cwoKKiBgZWAgLSBBY2Nlc3MgdG8gdGhlIFNvcm9iYW4gZW52aXJvbm1lbnQuAAAAAARuYW1lAAAAAAAAAAEAAAAQ",
         "AAAAAAAAAAAAAAAFYWRtaW4AAAAAAAAAAAAAAQAAABM=",
@@ -468,9 +517,9 @@ export class Client extends ContractClient {
         "AAAAAAAAAK5BbnlvbmUgY2FuIGNhbGwgdGhpcyB0byByZWZyZXNoIGEgcGxhbmV0J3MgcGVyc2lzdGVudCBUVEwuIFVzZWZ1bCBmb3IKc2Vjb25kYXJ5LW1hcmtldCBidXllcnMgb3Igc2NyaXB0cyB0aGF0IHdhbnQgdG8ga2VlcCBkb3JtYW50IHBsYW5ldHMKYWxpdmUgd2l0aG91dCB0YWtpbmcgYSBnYW1lIGFjdGlvbi4AAAAAAAZleHRlbmQAAAAAAAEAAAAAAAAAAmlkAAAAAAAEAAAAAQAAA+kAAAACAAAAAw==",
         "AAAAAAAAAF1SZXR1cm5zIHRoZSB0b2tlbiBjb2xsZWN0aW9uIHN5bWJvbC4KCiMgQXJndW1lbnRzCgoqIGBlYCAtIEFjY2VzcyB0byB0aGUgU29yb2JhbiBlbnZpcm9ubWVudC4AAAAAAAAGc3ltYm9sAAAAAAAAAAAAAQAAABA=",
         "AAAABQAAAMxFbWl0dGVkIHdoZW5ldmVyIGFuIGFkbWluIGNoYW5nZXMgYSBjb250cmFjdC1sZXZlbCBjb25maWd1cmF0aW9uIHZhbHVlCihjb29sZG93biB3aW5kb3csIGFkbWluIHJvdGF0aW9uLCBkcmFuZCB2ZXJpZmllciByb3RhdGlvbikuIE9mZi1jaGFpbgppbmRleGVycyBjYW4gdXNlIHRoaXMgZm9yIGFuIGF1ZGl0IHRyYWlsIG9mIGdvdmVybmFuY2UgYWN0aW9ucy4AAAAAAAAADUNvbmZpZ0NoYW5nZWQAAAAAAAABAAAABmNvbmZpZwAAAAAAAgAAAAAAAAADa2V5AAAAABEAAAAAAAAAAAAAAAV2YWx1ZQAAAAAAAAYAAAAAAAAAAg==",
+        "AAAAAgAAAHpUdXBsZSB2YXJpYW50cyBhcmUgcmVxdWlyZWQgYnkgU29yb2JhbidzICNbY29udHJhY3R0eXBlXSBlbnVtIGVuY29kaW5nLgpgR2VuZXNpcyh4LCB5KWAgYW5kIGBDb25qb2luKHBhcmVudF9hLCBwYXJlbnRfYilgLgAAAAAAAAAAAA5Db21taXRtZW50S2luZAAAAAAAAgAAAAEAAAAAAAAAB0dlbmVzaXMAAAAAAgAAAAUAAAAFAAAAAQAAAAAAAAAHQ29uam9pbgAAAAACAAAABAAAAAQ=",
         "AAAAAAAABABHaXZlcyBwZXJtaXNzaW9uIHRvIGBhcHByb3ZlZGAgdG8gdHJhbnNmZXIgdGhlIHRva2VuIHdpdGggYHRva2VuX2lkYCB0bwphbm90aGVyIGFjY291bnQuIFRoZSBhcHByb3ZhbCBpcyBjbGVhcmVkIHdoZW4gdGhlIHRva2VuIGlzCnRyYW5zZmVycmVkLgoKT25seSBhIHNpbmdsZSBhY2NvdW50IGNhbiBiZSBhcHByb3ZlZCBhdCBhIHRpbWUgZm9yIGEgYHRva2VuX2lkYC4KVG8gcmVtb3ZlIGFuIGFwcHJvdmFsLCB0aGUgYXBwcm92ZXIgY2FuIGFwcHJvdmUgdGhlaXIgb3duIGFkZHJlc3MsCmVmZmVjdGl2ZWx5IHJlbW92aW5nIHRoZSBwcmV2aW91cyBhcHByb3ZlZCBhZGRyZXNzLiBBbHRlcm5hdGl2ZWx5LApzZXR0aW5nIHRoZSBgbGl2ZV91bnRpbF9sZWRnZXJgIHRvIGAwYCB3aWxsIGFsc28gcmV2b2tlIHRoZSBhcHByb3ZhbC4KCiMgQXJndW1lbnRzCgoqIGBlYCAtIEFjY2VzcyB0byBTb3JvYmFuIGVudmlyb25tZW50LgoqIGBhcHByb3ZlcmAgLSBUaGUgYWRkcmVzcyBvZiB0aGUgYXBwcm92ZXIgKHNob3VsZCBiZSBgb3duZXJgIG9yCmBvcGVyYXRvcmApLgoqIGBhcHByb3ZlZGAgLSBUaGUgYWRkcmVzcyByZWNlaXZpbmcgdGhlIGFwcHJvdmFsLgoqIGB0b2tlbl9pZGAgLSBUb2tlbiBJRCBhcyBhIG51bWJlci4KKiBgbGl2ZV91bnRpbF9sZWRnZXJgIC0gVGhlIGxlZGdlciBudW1iZXIgYXQgd2hpY2ggdGhlIGFsbG93YW5jZQpleHBpcmVzLiBJZiBgbGl2ZV91bnRpbF9sZWRnZXJgIGlzIGAwYCwgdGhlIGFwcHJvdmFsIGlzIHJldm9rZWQuCgojIEVycm9ycwoKKiBbYE5vbkZ1bmdpYmxlVG9rZW5FcnJvcjo6Tm9uRXhpc3RlbnRUb2tlbmBdIC0gSWYgdGhlIHRva2VuIGRvZXMgbm90CmV4aXN0LgoqIFtgTm9uRnVuZ2libGVUb2tlbkVycm9yOjpJbnZhbGlkQXBwcm92ZXJgXSAtIElmIHRoZSBvd25lciBhZGRyZXNzIGlzCm5vdCB0aGUgYWN0dWFsIG93bmVyIG9mIHRoZSB0b2tlbi4KKiBbYE5vbkZ1bmdpYmxlVG9rZW5FcnJvcjo6SW52YWxpZExpdmVVbnRpbExlZGdlcmBdIC0gSWYgdGhlIGxlZGdlAAAAB2FwcHJvdmUAAAAABAAAAAAAAAAIYXBwcm92ZXIAAAATAAAAAAAAAAhhcHByb3ZlZAAAABMAAAAAAAAACHRva2VuX2lkAAAABAAAAAAAAAARbGl2ZV91bnRpbF9sZWRnZXIAAAAAAAAEAAAAAA==",
         "AAAAAAAAAKtSZXR1cm5zIHRoZSBudW1iZXIgb2YgdG9rZW5zIG93bmVkIGJ5IGBhY2NvdW50YC4KCiMgQXJndW1lbnRzCgoqIGBlYCAtIEFjY2VzcyB0byB0aGUgU29yb2JhbiBlbnZpcm9ubWVudC4KKiBgYWNjb3VudGAgLSBUaGUgYWRkcmVzcyBmb3Igd2hpY2ggdGhlIGJhbGFuY2UgaXMgYmVpbmcgcXVlcmllZC4AAAAAB2JhbGFuY2UAAAAAAQAAAAAAAAAHYWNjb3VudAAAAAATAAAAAQAAAAQ=",
-        "AAAAAAAAAPNDb25qb2luIHR3byBwYXJlbnRzIHRoZSBjYWxsZXIgb3ducy4gTWludHMgYSBjaGlsZCB3aG9zZSBETkEgaXMgYQpwZXItYnl0ZSBjcm9zc292ZXIgd2l0aCBtdXRhdGlvbi4gQm90aCBwYXJlbnRzIGdvIG9uIGNvb2xkb3duLgoKYHRvYCBtdXN0IGJlIG9uZSBvZiB0aGUgcGFyZW50cycgb3duZXJzIOKAlCBwcmV2ZW50aW5nIG1pbnRpbmcgY2hpbGRyZW4Kb250byB1bnJlbGF0ZWQgYWRkcmVzc2VzIChhdWRpdCBIaWdoICMxKS4AAAAAB2NvbmpvaW4AAAAABAAAAAAAAAAIcGFyZW50X2EAAAAEAAAAAAAAAAhwYXJlbnRfYgAAAAQAAAAAAAAAAnRvAAAAAAATAAAAAAAAAAVyb3VuZAAAAAAAAAYAAAABAAAD6QAAAAQAAAAD",
         "AAAAAAAAAGRNaWdyYXRlIGEgcGxhbmV0IHRvIG5ldyBjb29yZHMuIENhbGxlciBtdXN0IG93bi4gRXh0ZW5kcyB0aGUgcGxhbmV0J3MKVFRMIOKAlCBzZWUgYXVkaXQgQ3JpdGljYWwgIzQuAAAAB21pZ3JhdGUAAAAAAwAAAAAAAAACaWQAAAAAAAQAAAAAAAAAAXgAAAAAAAAFAAAAAAAAAAF5AAAAAAAABQAAAAEAAAPpAAAAAgAAAAM=",
         "AAAAAAAAAOVSZXR1cm5zIHRoZSBvd25lciBvZiB0aGUgdG9rZW4gd2l0aCBgdG9rZW5faWRgLgoKIyBBcmd1bWVudHMKCiogYGVgIC0gQWNjZXNzIHRvIHRoZSBTb3JvYmFuIGVudmlyb25tZW50LgoqIGB0b2tlbl9pZGAgLSBUb2tlbiBJRCBhcyBhIG51bWJlci4KCiMgRXJyb3JzCgoqIFtgTm9uRnVuZ2libGVUb2tlbkVycm9yOjpOb25FeGlzdGVudFRva2VuYF0gLSBJZiB0aGUgdG9rZW4gZG9lcyBub3QKZXhpc3QuAAAAAAAACG93bmVyX29mAAAAAQAAAAAAAAAIdG9rZW5faWQAAAAEAAAAAQAAABM=",
         "AAAAAAAAAqBUcmFuc2ZlcnMgdGhlIHRva2VuIHdpdGggYHRva2VuX2lkYCBmcm9tIGBmcm9tYCB0byBgdG9gLgoKV0FSTklORzogQ29uZmlybWF0aW9uIHRoYXQgdGhlIHJlY2lwaWVudCBpcyBjYXBhYmxlIG9mIHJlY2VpdmluZyB0aGUKYE5vbi1GdW5naWJsZWAgaXMgdGhlIGNhbGxlcidzIHJlc3BvbnNpYmlsaXR5OyBvdGhlcndpc2UgdGhlIE5GVCBtYXkgYmUKcGVybWFuZW50bHkgbG9zdC4KCiMgQXJndW1lbnRzCgoqIGBlYCAtIEFjY2VzcyB0byB0aGUgU29yb2JhbiBlbnZpcm9ubWVudC4KKiBgZnJvbWAgLSBBY2NvdW50IG9mIHRoZSBzZW5kZXIuCiogYHRvYCAtIEFjY291bnQgb2YgdGhlIHJlY2lwaWVudC4KKiBgdG9rZW5faWRgIC0gVG9rZW4gSUQgYXMgYSBudW1iZXIuCgojIEVycm9ycwoKKiBbYE5vbkZ1bmdpYmxlVG9rZW5FcnJvcjo6SW5jb3JyZWN0T3duZXJgXSAtIElmIHRoZSBjdXJyZW50IG93bmVyCihiZWZvcmUgY2FsbGluZyB0aGlzIGZ1bmN0aW9uKSBpcyBub3QgYGZyb21gLgoqIFtgTm9uRnVuZ2libGVUb2tlbkVycm9yOjpOb25FeGlzdGVudFRva2VuYF0gLSBJZiB0aGUgdG9rZW4gZG9lcyBub3QKZXhpc3QuCgojIEV2ZW50cwoKKiB0b3BpY3MgLSBgWyJ0cmFuc2ZlciIsIGZyb206IEFkZHJlc3MsIHRvOiBBZGRyZXNzXWAKKiBkYXRhIC0gYFt0b2tlbl9pZDogdTMyXWAAAAAIdHJhbnNmZXIAAAADAAAAAAAAAARmcm9tAAAAEwAAAAAAAAACdG8AAAAAABMAAAAAAAAACHRva2VuX2lkAAAABAAAAAA=",
@@ -482,12 +531,17 @@ export class Client extends ContractClient {
         "AAAAAAAAAAAAAAALY29vbGRvd25fb2YAAAAAAQAAAAAAAAACaWQAAAAAAAQAAAABAAAABA==",
         "AAAAAAAAAPFSZXR1cm5zIHRoZSBhY2NvdW50IGFwcHJvdmVkIGZvciB0aGUgdG9rZW4gd2l0aCBgdG9rZW5faWRgLgoKIyBBcmd1bWVudHMKCiogYGVgIC0gQWNjZXNzIHRvIHRoZSBTb3JvYmFuIGVudmlyb25tZW50LgoqIGB0b2tlbl9pZGAgLSBUb2tlbiBJRCBhcyBhIG51bWJlci4KCiMgRXJyb3JzCgoqIFtgTm9uRnVuZ2libGVUb2tlbkVycm9yOjpOb25FeGlzdGVudFRva2VuYF0gLSBJZiB0aGUgdG9rZW4gZG9lcyBub3QKZXhpc3QuAAAAAAAADGdldF9hcHByb3ZlZAAAAAEAAAAAAAAACHRva2VuX2lkAAAABAAAAAEAAAPoAAAAEw==",
         "AAAAAAAAAtBSZXR1cm5zIHRoZSBgdG9rZW5faWRgIGF0IGEgZ2l2ZW4gYGluZGV4YCBpbiB0aGUgZ2xvYmFsIHRva2VuIGxpc3QuClVzZSBhbG9uZyB3aXRoIFtgTm9uRnVuZ2libGVFbnVtZXJhYmxlOjp0b3RhbF9zdXBwbHlgXSB0byBlbnVtZXJhdGUKYWxsIHRoZSB0b2tlbnMgaW4gdGhlIGNvbnRyYWN0LgoKQSBmdW5jdGlvbiB0byBnZXQgYWxsIHRva2VucyBvZiBhIGNvbnRyYWN0IGlzIG5vdCBwcm92aWRlZCBiZWNhdXNlIHRoYXQKd291bGQgYmUgdW5ib3VuZGVkLiBUbyBlbnVtZXJhdGUgYWxsIHRva2VucyBvZiBhIGNvbnRyYWN0LCB1c2UKW2BOb25GdW5naWJsZUVudW1lcmFibGU6OnRvdGFsX3N1cHBseWBdIHRvIGdldCB0aGUgdG90YWwgbnVtYmVyIG9mCnRva2VucyBhbmQgdGhlbiB1c2UgW2BOb25GdW5naWJsZUVudW1lcmFibGU6OmdldF90b2tlbl9pZGBdIHRvIHJldHJpZXZlCmVhY2ggdG9rZW4gb25lIGJ5IG9uZS4KCiMgQXJndW1lbnRzCgoqIGBlYCAtIEFjY2VzcyB0byB0aGUgU29yb2JhbiBlbnZpcm9ubWVudC4KKiBgaW5kZXhgIC0gSW5kZXggb2YgdGhlIHRva2VuIGluIHRoZSBnbG9iYWwgbGlzdC4KCiMgRXJyb3JzCgoqIFtgY3JhdGU6Om5vbl9mdW5naWJsZTo6Tm9uRnVuZ2libGVUb2tlbkVycm9yOjpUb2tlbk5vdEZvdW5kSW5HbG9iYWxMaXN0YF0gLSBXaGVuIHRoZSB0b2tlbgpJRCBpcyBub3QgZm91bmQgaW4gdGhlIGdsb2JhbCBlbnVtZXJhdGlvbi4AAAAMZ2V0X3Rva2VuX2lkAAAAAQAAAAAAAAAFaW5kZXgAAAAAAAAEAAAAAQAAAAQ=",
-        "AAAAAAAAAYhBZG1pbi1vbmx5OiBtaW50IGEgZ2VuZXNpcyBwbGFuZXQgYXQgY29vcmRzICh4LCB5KSB1c2luZyBkcmFuZCByb3VuZCBgcm91bmRgLgoKVGhlIGNhbGxlciBwaWNrcyBhIGNvbmNyZXRlIGRyYW5kIHJvdW5kIHNvIHRoZSByZWFkIGZvb3RwcmludCBpcwpkZXRlcm1pbmlzdGljIGJldHdlZW4gc2ltdWxhdGUgYW5kIHN1Ym1pdC4gQ2FsbGluZyBgbGF0ZXN0KClgIGluc2lkZQp0aGUgY29udHJhY3Qgd291bGQgcmFjZSB0aGUgZXZlci1hZHZhbmNpbmcgdmVyaWZpZXIgc3RhdGUuCioqTm90ZToqKiB1bnRpbCBjb21taXQtcmV2ZWFsIGxhbmRzICh2MiksIHRoZSBjYWxsZXIgY2FuIGdyaW5kIGJ5CnBpY2tpbmcgZmF2b3JhYmxlIHJvdW5kcyDigJQgc2VlIGF1ZGl0IENyaXRpY2FsICMxLyMyLgAAAAxtaW50X2dlbmVzaXMAAAAEAAAAAAAAAAJ0bwAAAAAAEwAAAAAAAAAFcm91bmQAAAAAAAAGAAAAAAAAAAF4AAAAAAAABQAAAAAAAAABeQAAAAAAAAUAAAABAAAD6QAAAAQAAAAD",
+        "AAAAAAAAAMtWaWV3OiBhdCB3aGljaCBsZWRnZXIgZG9lcyBgY29tbWl0bWVudF9pZGAgYmVjb21lIHJldmVhbGFibGUuIFJldHVybnMKYGNvbW1pdF9sZWRnZXIgKyBNSU5fUkVWRUFMX0RFTEFZX0xFREdFUlNgLiBGcm9udGVuZCBjYW4gY29tcGFyZSB0bwp0aGUgY3VycmVudCBsZWRnZXIgdG8gZGVjaWRlIHdoZXRoZXIgdG8gZW5hYmxlIGEgInJldmVhbCIgYnV0dG9uLgAAAAAMcmV2ZWFsX2FmdGVyAAAAAQAAAAAAAAANY29tbWl0bWVudF9pZAAAAAAAAAQAAAABAAAD6QAAAAQAAAAD",
         "AAAAAAAAAAAAAAAMc2V0X2Nvb2xkb3duAAAAAQAAAAAAAAAHbGVkZ2VycwAAAAAEAAAAAQAAA+kAAAACAAAAAw==",
         "AAAAAAAAAHNSZXR1cm5zIHRoZSB0b3RhbCBhbW91bnQgb2YgdG9rZW5zIHN0b3JlZCBieSB0aGUgY29udHJhY3QuCgojIEFyZ3VtZW50cwoKKiBgZWAgLSBBY2Nlc3MgdG8gdGhlIFNvcm9iYW4gZW52aXJvbm1lbnQuAAAAAAx0b3RhbF9zdXBwbHkAAAAAAAAAAQAAAAQ=",
         "AAAAAAAAAAAAAAANX19jb25zdHJ1Y3RvcgAAAAAAAAUAAAAAAAAABWFkbWluAAAAAAAAEwAAAAAAAAAFZHJhbmQAAAAAAAATAAAAAAAAAAN1cmkAAAAAEAAAAAAAAAAEbmFtZQAAABAAAAAAAAAABnN5bWJvbAAAAAAAEAAAAAA=",
+        "AAAAAAAAAEJSZXR1cm5zIHRoZSBzdG9yZWQgY29tbWl0bWVudCBzbyBhIHdhdGNoZXIgY2FuIHNob3cgcGVuZGluZyBzdGF0ZS4AAAAAAA1jb21taXRtZW50X29mAAAAAAAAAQAAAAAAAAANY29tbWl0bWVudF9pZAAAAAAAAAQAAAABAAAD6QAAB9AAAAAKQ29tbWl0bWVudAAAAAAAAw==",
         "AAAAAAAABABUcmFuc2ZlcnMgdGhlIHRva2VuIHdpdGggYHRva2VuX2lkYCBmcm9tIGBmcm9tYCB0byBgdG9gIGJ5IHVzaW5nCmBzcGVuZGVyYHMgYXBwcm92YWwuCgpVbmxpa2UgYHRyYW5zZmVyKClgLCB3aGljaCBpcyB1c2VkIHdoZW4gdGhlIHRva2VuIG93bmVyIGluaXRpYXRlcyB0aGUKdHJhbnNmZXIsIGB0cmFuc2Zlcl9mcm9tKClgIGFsbG93cyBhbiBhcHByb3ZlZCB0aGlyZCBwYXJ0eQooYHNwZW5kZXJgKSB0byB0cmFuc2ZlciB0aGUgdG9rZW4gb24gYmVoYWxmIG9mIHRoZSBvd25lci4gVGhpcwpmdW5jdGlvbiB2ZXJpZmllcyB0aGF0IGBzcGVuZGVyYCBoYXMgdGhlIG5lY2Vzc2FyeSBhcHByb3ZhbC4KCldBUk5JTkc6IENvbmZpcm1hdGlvbiB0aGF0IHRoZSByZWNpcGllbnQgaXMgY2FwYWJsZSBvZiByZWNlaXZpbmcgdGhlCmBOb24tRnVuZ2libGVgIGlzIHRoZSBjYWxsZXIncyByZXNwb25zaWJpbGl0eTsgb3RoZXJ3aXNlIHRoZSBORlQgbWF5IGJlCnBlcm1hbmVudGx5IGxvc3QuCgojIEFyZ3VtZW50cwoKKiBgZWAgLSBBY2Nlc3MgdG8gdGhlIFNvcm9iYW4gZW52aXJvbm1lbnQuCiogYHNwZW5kZXJgIC0gVGhlIGFkZHJlc3MgYXV0aG9yaXppbmcgdGhlIHRyYW5zZmVyLgoqIGBmcm9tYCAtIEFjY291bnQgb2YgdGhlIHNlbmRlci4KKiBgdG9gIC0gQWNjb3VudCBvZiB0aGUgcmVjaXBpZW50LgoqIGB0b2tlbl9pZGAgLSBUb2tlbiBJRCBhcyBhIG51bWJlci4KCiMgRXJyb3JzCgoqIFtgTm9uRnVuZ2libGVUb2tlbkVycm9yOjpJbmNvcnJlY3RPd25lcmBdIC0gSWYgdGhlIGN1cnJlbnQgb3duZXIKKGJlZm9yZSBjYWxsaW5nIHRoaXMgZnVuY3Rpb24pIGlzIG5vdCBgZnJvbWAuCiogW2BOb25GdW5naWJsZVRva2VuRXJyb3I6Okluc3VmZmljaWVudEFwcHJvdmFsYF0gLSBJZiB0aGUgc3BlbmRlciBkb2VzCm5vdCBoYXZlIGEgdmFsaWQgYXBwcm92YWwuCiogW2BOb25GdW5naWJsZVRva2VuRXJyb3I6Ok5vbkV4aXN0ZW50VG9rZW5gXSAtIElmIHRoZSB0b2tlbiBkb2VzIG5vdApleGlzdC4KCiMgRXZlbnRzAAAADXRyYW5zZmVyX2Zyb20AAAAAAAAEAAAAAAAAAAdzcGVuZGVyAAAAABMAAAAAAAAABGZyb20AAAATAAAAAAAAAAJ0bwAAAAAAEwAAAAAAAAAIdG9rZW5faWQAAAAEAAAAAA==",
+        "AAAAAAAAAOVDb21taXQgdG8gY29uam9pbmluZyB0d28gcGFyZW50cy4gU2FtZSBhbnRpLWdyaW5kaW5nIGZsb3cgYXMKY29tbWl0X2dlbmVzaXM6IHRhcmdldF9yb3VuZCBpcyBwaW5uZWQgdG8gYSBmdXR1cmUgZHJhbmQgcm91bmQgc28KdGhlIHVzZXIgY2FuJ3QgcGVlayB0aGUgc2VlZCBhdCBjb21taXQgdGltZS4KCmB0b2AgbXVzdCBiZSBvbmUgb2YgdGhlIHBhcmVudHMnIG93bmVycyAoYXVkaXQgSGlnaCAjMSkuAAAAAAAADmNvbW1pdF9jb25qb2luAAAAAAAEAAAAAAAAAAhwYXJlbnRfYQAAAAQAAAAAAAAACHBhcmVudF9iAAAABAAAAAAAAAACdG8AAAAAABMAAAAAAAAADm9ic2VydmVkX3JvdW5kAAAAAAAGAAAAAQAAA+kAAAAEAAAAAw==",
+        "AAAAAAAAAYBBZG1pbi1vbmx5OiBjb21taXQgdG8gYSBnZW5lc2lzIG1pbnQuIGBvYnNlcnZlZF9yb3VuZGAgaXMgdGhlCmNhbGxlcidzIHZpZXcgb2YgdGhlIGN1cnJlbnQgZHJhbmQgcm91bmQ7IHRoZSBjb250cmFjdCBzdG9yZXMKYHRhcmdldF9yb3VuZCA9IG9ic2VydmVkX3JvdW5kICsgTE9PS0FIRUFEX1JPVU5EU2AuIFJldmVhbCBjYW4gbGFuZAphZnRlciBNSU5fUkVWRUFMX0RFTEFZX0xFREdFUlMgbGVkZ2VycywgYXQgd2hpY2ggcG9pbnQgdGhlIHRhcmdldApyb3VuZCdzIHJhbmRvbW5lc3MgZXhpc3RzIGFuZCB0aGUgdXNlciBjb3VsZCBub3QgaGF2ZSBwcmVkaWN0ZWQgaXQKYXQgY29tbWl0IHRpbWUuIENsb3NlcyBhdWRpdCBDcml0aWNhbCAjMS8jMiAoRE5BIGdyaW5kaW5nKS4AAAAOY29tbWl0X2dlbmVzaXMAAAAAAAQAAAAAAAAAAnRvAAAAAAATAAAAAAAAAA5vYnNlcnZlZF9yb3VuZAAAAAAABgAAAAAAAAABeAAAAAAAAAUAAAAAAAAAAXkAAAAAAAAFAAAAAQAAA+kAAAAEAAAAAw==",
         "AAAAAAAAAAAAAAAOZHJhbmRfdmVyaWZpZXIAAAAAAAAAAAABAAAAEw==",
+        "AAAAAAAAADdSZXZlYWwgYSBwcmV2aW91c2x5IGNvbW1pdHRlZCBjb25qb2luLiBBbnlvbmUgY2FuIGNhbGwuAAAAAA5yZXZlYWxfY29uam9pbgAAAAAAAQAAAAAAAAANY29tbWl0bWVudF9pZAAAAAAAAAQAAAABAAAD6QAAAAQAAAAD",
+        "AAAAAAAAAM9SZXZlYWwgYSBwcmV2aW91c2x5IGNvbW1pdHRlZCBnZW5lc2lzIG1pbnQuIEFueW9uZSBjYW4gY2FsbCAodGhlCmNvbW1pdG1lbnQgY2FycmllcyB0aGUgcmVjaXBpZW50KSDigJQgYnV0IHJldmVhbCB3aWxsIGZhaWwgaWYgdGhlCm1pbmltdW0gcmV2ZWFsIGRlbGF5IGhhc24ndCBwYXNzZWQgb3IgdGhlIGRyYW5kIHJvdW5kIHN0aWxsIGlzbid0CmF2YWlsYWJsZS4AAAAADnJldmVhbF9nZW5lc2lzAAAAAAABAAAAAAAAAA1jb21taXRtZW50X2lkAAAAAAAABAAAAAEAAAPpAAAABAAAAAM=",
         "AAAAAAAAAr9BcHByb3ZlIG9yIHJlbW92ZSBgb3BlcmF0b3JgIGFzIGFuIG9wZXJhdG9yIGZvciB0aGUgb3duZXIuCgpPcGVyYXRvcnMgY2FuIGNhbGwgYHRyYW5zZmVyX2Zyb20oKWAgZm9yIGFueSB0b2tlbiBoZWxkIGJ5IGBvd25lcmAsCmFuZCBjYWxsIGBhcHByb3ZlKClgIG9uIGJlaGFsZiBvZiBgb3duZXJgLgoKIyBBcmd1bWVudHMKCiogYGVgIC0gQWNjZXNzIHRvIFNvcm9iYW4gZW52aXJvbm1lbnQuCiogYG93bmVyYCAtIFRoZSBhZGRyZXNzIGhvbGRpbmcgdGhlIHRva2Vucy4KKiBgb3BlcmF0b3JgIC0gQWNjb3VudCB0byBhZGQgdG8gdGhlIHNldCBvZiBhdXRob3JpemVkIG9wZXJhdG9ycy4KKiBgbGl2ZV91bnRpbF9sZWRnZXJgIC0gVGhlIGxlZGdlciBudW1iZXIgYXQgd2hpY2ggdGhlIGFsbG93YW5jZQpleHBpcmVzLiBJZiBgbGl2ZV91bnRpbF9sZWRnZXJgIGlzIGAwYCwgdGhlIGFwcHJvdmFsIGlzIHJldm9rZWQuCgojIEVycm9ycwoKKiBbYE5vbkZ1bmdpYmxlVG9rZW5FcnJvcjo6SW52YWxpZExpdmVVbnRpbExlZGdlcmBdIC0gSWYgdGhlIGxlZGdlcgpudW1iZXIgaXMgbGVzcyB0aGFuIHRoZSBjdXJyZW50IGxlZGdlciBudW1iZXIuCgojIEV2ZW50cwoKKiB0b3BpY3MgLSBgWyJhcHByb3ZlX2Zvcl9hbGwiLCBmcm9tOiBBZGRyZXNzXWAKKiBkYXRhIC0gYFtvcGVyYXRvcjogQWRkcmVzcywgbGl2ZV91bnRpbF9sZWRnZXI6IHUzMl1gAAAAAA9hcHByb3ZlX2Zvcl9hbGwAAAAAAwAAAAAAAAAFb3duZXIAAAAAAAATAAAAAAAAAAhvcGVyYXRvcgAAABMAAAAAAAAAEWxpdmVfdW50aWxfbGVkZ2VyAAAAAAAABAAAAAA=",
         "AAAAAAAAAe1SZXR1cm5zIHRoZSBgdG9rZW5faWRgIG93bmVkIGJ5IGBvd25lcmAgYXQgYSBnaXZlbiBgaW5kZXhgIGluIHRoZQpvd25lcidzIGxvY2FsIGxpc3QuIFVzZSBhbG9uZyB3aXRoCltgY3JhdGU6Om5vbl9mdW5naWJsZTo6Tm9uRnVuZ2libGVUb2tlbjo6YmFsYW5jZWBdIHRvIGVudW1lcmF0ZSBhbGwgb2YKYG93bmVyYCdzIHRva2Vucy4KCiMgQXJndW1lbnRzCgoqIGBlYCAtIEFjY2VzcyB0byB0aGUgU29yb2JhbiBlbnZpcm9ubWVudC4KKiBgb3duZXJgIC0gQWNjb3VudCBvZiB0aGUgdG9rZW4ncyBvd25lci4KKiBgaW5kZXhgIC0gSW5kZXggb2YgdGhlIHRva2VuIGluIHRoZSBvd25lcidzIGxvY2FsIGxpc3QuCgojIEVycm9ycwoKKiBbYGNyYXRlOjpub25fZnVuZ2libGU6Ok5vbkZ1bmdpYmxlVG9rZW5FcnJvcjo6VG9rZW5Ob3RGb3VuZEluT3duZXJMaXN0YF0gLSBXaGVuIHRoZSB0b2tlbgpJRCBpcyBub3QgZm91bmQgaW4gdGhlIG93bmVyJ3MgZW51bWVyYXRpb24uAAAAAAAAEmdldF9vd25lcl90b2tlbl9pZAAAAAAAAgAAAAAAAAAFb3duZXIAAAAAAAATAAAAAAAAAAVpbmRleAAAAAAAAAQAAAABAAAABA==",
         "AAAAAAAAANdSZXR1cm5zIHdoZXRoZXIgdGhlIGBvcGVyYXRvcmAgaXMgYWxsb3dlZCB0byBtYW5hZ2UgYWxsIHRoZSBhc3NldHMgb2YKYG93bmVyYC4KCiMgQXJndW1lbnRzCgoqIGBlYCAtIEFjY2VzcyB0byB0aGUgU29yb2JhbiBlbnZpcm9ubWVudC4KKiBgb3duZXJgIC0gQWNjb3VudCBvZiB0aGUgdG9rZW4ncyBvd25lci4KKiBgb3BlcmF0b3JgIC0gQWNjb3VudCB0byBiZSBjaGVja2VkLgAAAAATaXNfYXBwcm92ZWRfZm9yX2FsbAAAAAACAAAAAAAAAAVvd25lcgAAAAAAABMAAAAAAAAACG9wZXJhdG9yAAAAEwAAAAEAAAAB",
@@ -508,7 +562,6 @@ export class Client extends ContractClient {
         symbol: this.txFromJSON<string>,
         approve: this.txFromJSON<null>,
         balance: this.txFromJSON<u32>,
-        conjoin: this.txFromJSON<Result<u32>>,
         migrate: this.txFromJSON<Result<void>>,
         owner_of: this.txFromJSON<string>,
         transfer: this.txFromJSON<null>,
@@ -520,11 +573,16 @@ export class Client extends ContractClient {
         cooldown_of: this.txFromJSON<u32>,
         get_approved: this.txFromJSON<Option<string>>,
         get_token_id: this.txFromJSON<u32>,
-        mint_genesis: this.txFromJSON<Result<u32>>,
+        reveal_after: this.txFromJSON<Result<u32>>,
         set_cooldown: this.txFromJSON<Result<void>>,
         total_supply: this.txFromJSON<u32>,
+        commitment_of: this.txFromJSON<Result<Commitment>>,
         transfer_from: this.txFromJSON<null>,
+        commit_conjoin: this.txFromJSON<Result<u32>>,
+        commit_genesis: this.txFromJSON<Result<u32>>,
         drand_verifier: this.txFromJSON<string>,
+        reveal_conjoin: this.txFromJSON<Result<u32>>,
+        reveal_genesis: this.txFromJSON<Result<u32>>,
         approve_for_all: this.txFromJSON<null>,
         get_owner_token_id: this.txFromJSON<u32>,
         is_approved_for_all: this.txFromJSON<boolean>

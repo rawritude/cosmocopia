@@ -568,9 +568,7 @@ fn stash_commitment(e: &Env, c: Commitment) -> u32 {
         .instance()
         .get(&DataKey::NextCommitmentId)
         .unwrap_or(0);
-    e.storage()
-        .persistent()
-        .set(&DataKey::Commitment(id), &c);
+    e.storage().persistent().set(&DataKey::Commitment(id), &c);
     e.storage()
         .persistent()
         .extend_ttl(&DataKey::Commitment(id), TTL_THRESHOLD, TTL_EXTEND_TO);
