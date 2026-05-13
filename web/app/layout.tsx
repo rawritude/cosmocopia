@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import TopNav from '../components/TopNav';
 import './globals.css';
 
 export const metadata = {
@@ -15,7 +16,10 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
       </head>
-      <body>{children}</body>
+      <body>
+        <TopNav />
+        {children}
+      </body>
     </html>
   );
 }
