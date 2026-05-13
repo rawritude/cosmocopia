@@ -90,7 +90,7 @@ fn genesis_mint_writes_dna_and_vitals() {
     let f = setup(0xAB);
     let user = Address::generate(&f.env);
 
-    let id = f.planet.mint_genesis(&user, &0, &0);
+    let id = f.planet.mint_genesis(&user, &1u64, &0, &0);
     assert_eq!(id, 0);
     assert_eq!(f.planet.owner_of(&id), user);
 
@@ -110,12 +110,12 @@ fn conjoin_produces_child_with_lineage_signature() {
     let user = Address::generate(&f.env);
 
     set_drand(&f.env, &f.drand_id, 100, 0xAA);
-    let a = f.planet.mint_genesis(&user, &0, &0);
+    let a = f.planet.mint_genesis(&user, &1u64, &0, &0);
     set_drand(&f.env, &f.drand_id, 101, 0x55);
-    let b = f.planet.mint_genesis(&user, &10, &10);
+    let b = f.planet.mint_genesis(&user, &1u64, &10, &10);
     set_drand(&f.env, &f.drand_id, 102, 0x33);
 
-    let child = f.planet.conjoin(&a, &b, &user);
+    let child = f.planet.conjoin(&a, &b, &user, &1u64);
     assert_eq!(f.planet.owner_of(&child), user);
 
     let child_dna = f.planet.dna_of(&child).to_array();
@@ -138,8 +138,8 @@ fn conjoin_produces_child_with_lineage_signature() {
 fn conjoin_same_parent_fails() {
     let f = setup(0x22);
     let user = Address::generate(&f.env);
-    let a = f.planet.mint_genesis(&user, &0, &0);
-    let err = f.planet.try_conjoin(&a, &a, &user).err().unwrap().unwrap();
+    let a = f.planet.mint_genesis(&user, &1u64, &0, &0);
+    let err = f.planet.try_conjoin(&a, &a, &user, &1u64).err().unwrap().unwrap();
     assert_eq!(err, Error::SameParent);
 }
 
@@ -148,25 +148,25 @@ fn conjoin_cooldown_blocks_then_clears() {
     let f = setup(0x33);
     let user = Address::generate(&f.env);
 
-    let a = f.planet.mint_genesis(&user, &0, &0);
-    let b = f.planet.mint_genesis(&user, &1, &1);
-    let c = f.planet.mint_genesis(&user, &2, &2);
+    let a = f.planet.mint_genesis(&user, &1u64, &0, &0);
+    let b = f.planet.mint_genesis(&user, &1u64, &1, &1);
+    let c = f.planet.mint_genesis(&user, &1u64, &2, &2);
 
-    let _ = f.planet.conjoin(&a, &b, &user);
+    let _ = f.planet.conjoin(&a, &b, &user, &1u64);
 
-    let err = f.planet.try_conjoin(&a, &c, &user).err().unwrap().unwrap();
+    let err = f.planet.try_conjoin(&a, &c, &user, &1u64).err().unwrap().unwrap();
     assert_eq!(err, Error::OnCooldown);
 
     let current = f.env.ledger().sequence();
     f.env.ledger().set_sequence_number(current + 800);
-    let _ = f.planet.conjoin(&a, &c, &user);
+    let _ = f.planet.conjoin(&a, &c, &user, &1u64);
 }
 
 #[test]
 fn care_changes_vitals() {
     let f = setup(0x44);
     let user = Address::generate(&f.env);
-    let id = f.planet.mint_genesis(&user, &0, &0);
+    let id = f.planet.mint_genesis(&user, &1u64, &0, &0);
 
     let before = f.planet.vitals_of(&id);
     f.planet.care(&id, &(stats::Care::Warm as u32));
@@ -178,7 +178,7 @@ fn care_changes_vitals() {
 fn invalid_care_action_errors() {
     let f = setup(0x55);
     let user = Address::generate(&f.env);
-    let id = f.planet.mint_genesis(&user, &0, &0);
+    let id = f.planet.mint_genesis(&user, &1u64, &0, &0);
     let err = f.planet.try_care(&id, &999u32).err().unwrap().unwrap();
     assert_eq!(err, Error::InvalidCareAction);
 }
@@ -187,7 +187,7 @@ fn invalid_care_action_errors() {
 fn migrate_updates_coords() {
     let f = setup(0x66);
     let user = Address::generate(&f.env);
-    let id = f.planet.mint_genesis(&user, &0, &0);
+    let id = f.planet.mint_genesis(&user, &1u64, &0, &0);
     f.planet.migrate(&id, &42, &-17);
     assert_eq!(f.planet.coords_of(&id), (42, -17));
 }
@@ -196,7 +196,7 @@ fn migrate_updates_coords() {
 fn vitals_decay_after_many_periods() {
     let f = setup(0x77);
     let user = Address::generate(&f.env);
-    let id = f.planet.mint_genesis(&user, &0, &0);
+    let id = f.planet.mint_genesis(&user, &1u64, &0, &0);
     let v0 = f.planet.vitals_of(&id);
 
     let now = f.env.ledger().sequence();

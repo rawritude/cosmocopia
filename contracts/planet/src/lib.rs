@@ -99,12 +99,16 @@ impl PlanetContract {
         Base::set_metadata(e, uri, name, symbol);
     }
 
-    /// Admin-only: mint a genesis planet at coords (x, y) using the latest drand round.
-    pub fn mint_genesis(e: &Env, to: Address, x: i32, y: i32) -> Result<u32, Error> {
+    /// Admin-only: mint a genesis planet at coords (x, y) using drand round `round`.
+    ///
+    /// The caller picks a concrete drand round so the read footprint is
+    /// deterministic between simulate and submit. Calling `latest()` inside
+    /// the contract would race the ever-advancing verifier state.
+    pub fn mint_genesis(e: &Env, to: Address, round: u64, x: i32, y: i32) -> Result<u32, Error> {
         let admin = require_admin(e)?;
         admin.require_auth();
 
-        let (round, seed) = latest_random(e)?;
+        let seed = random_at(e, round)?;
         let dna = dna::from_seed(e, &seed, round);
 
         let token_id = Base::sequential_mint(e, &to);
@@ -124,11 +128,14 @@ impl PlanetContract {
 
     /// Conjoin two parents the caller owns. Mints a child whose DNA is a per-byte
     /// crossover with mutation. Both parents go on cooldown.
+    /// `round` pins the drand round used to source mutation entropy so the
+    /// transaction footprint is stable between simulate and submit.
     pub fn conjoin(
         e: &Env,
         parent_a: u32,
         parent_b: u32,
         to: Address,
+        round: u64,
     ) -> Result<u32, Error> {
         if parent_a == parent_b {
             return Err(Error::SameParent);
@@ -158,7 +165,7 @@ impl PlanetContract {
             return Err(Error::Unhealthy);
         }
 
-        let (round, seed) = latest_random(e)?;
+        let seed = random_at(e, round)?;
         let child_dna = dna::crossover(e, &dna_a, &dna_b, &seed, round);
 
         let child_id = Base::sequential_mint(e, &to);
@@ -284,10 +291,10 @@ fn require_admin(e: &Env) -> Result<Address, Error> {
         .ok_or(Error::NotAdmin)
 }
 
-fn latest_random(e: &Env) -> Result<(u64, BytesN<32>), Error> {
+fn random_at(e: &Env, round: u64) -> Result<BytesN<32>, Error> {
     let drand_addr: Address = e.storage().instance().get(&DataKey::Drand).unwrap();
     let client = DrandClient::new(e, &drand_addr);
-    client.latest().ok_or(Error::DrandUnavailable)
+    client.get(&round).ok_or(Error::DrandUnavailable)
 }
 
 fn write_planet(e: &Env, id: u32, dna: &BytesN<32>, coords: (i32, i32)) {

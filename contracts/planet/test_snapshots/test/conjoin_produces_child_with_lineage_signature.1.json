@@ -22,6 +22,9 @@
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
                 },
                 {
+                  "u64": "1"
+                },
+                {
                   "i32": 0
                 },
                 {
@@ -46,6 +49,9 @@
               "args": [
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
+                },
+                {
+                  "u64": "1"
                 },
                 {
                   "i32": 10
@@ -78,6 +84,9 @@
                 },
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
+                },
+                {
+                  "u64": "1"
                 }
               ]
             }
@@ -339,7 +348,7 @@
               },
               "durability": "persistent",
               "val": {
-                "bytes": "aaaaaaaaaaaaaaaa000000000000006400aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                "bytes": "aaaaaaaaaaaaaaaa000000000000000100aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
               }
             }
           },
@@ -366,7 +375,7 @@
               },
               "durability": "persistent",
               "val": {
-                "bytes": "5555555555555555000000000000006500555555555555555555555555555555"
+                "bytes": "5555555555555555000000000000000100555555555555555555555555555555"
               }
             }
           },
@@ -393,7 +402,7 @@
               },
               "durability": "persistent",
               "val": {
-                "bytes": "5555aaaa5555aaaaffffffff00000066015b3333333333333333333333333333"
+                "bytes": "5555aaaa5555aaaaffffffff00000001015b3333333333333333333333333333"
               }
             }
           },
