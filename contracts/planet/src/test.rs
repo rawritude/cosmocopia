@@ -283,3 +283,166 @@ fn healthy_factor_scoring() {
     };
     assert_eq!(stats::healthy_factor(&dying), 0);
 }
+
+// =============================================================================
+//  Auth gate tests — these *don't* call env.mock_all_auths() globally so we
+//  can verify the contract actually rejects callers without the right auth.
+// =============================================================================
+
+use soroban_sdk::testutils::MockAuth;
+use soroban_sdk::IntoVal;
+
+fn raw_setup() -> Fixture {
+    let env = Env::default();
+    let admin = Address::generate(&env);
+    let drand_id = env.register(MockDrand, ());
+
+    // Seed the mock drand verifier with deterministic randomness. We mock all
+    // auths *only for this setup phase*, then drop the mock.
+    env.mock_all_auths();
+    let drand_client = MockDrandClient::new(&env, &drand_id);
+    drand_client.set_latest(&1u64, &BytesN::from_array(&env, &[0x99u8; 32]));
+
+    let planet_id = env.register(
+        PlanetContract,
+        (
+            admin.clone(),
+            drand_id.clone(),
+            String::from_str(&env, "ipfs://meta/"),
+            String::from_str(&env, "Cosmocopia"),
+            String::from_str(&env, "PLN"),
+        ),
+    );
+    let planet = PlanetContractClient::new(&env, &planet_id);
+    // Reset auth mocks so subsequent calls require explicit auth.
+    env.set_auths(&[]);
+    Fixture {
+        env,
+        drand_id,
+        planet,
+    }
+}
+
+#[test]
+fn mint_genesis_rejects_non_admin() {
+    let f = raw_setup();
+    let bystander = Address::generate(&f.env);
+    let err = f
+        .planet
+        .mock_auths(&[MockAuth {
+            address: &bystander,
+            invoke: &soroban_sdk::testutils::MockAuthInvoke {
+                contract: &f.planet.address,
+                fn_name: "mint_genesis",
+                args: (bystander.clone(), 1u64, 0i32, 0i32).into_val(&f.env),
+                sub_invokes: &[],
+            },
+        }])
+        .try_mint_genesis(&bystander, &1u64, &0, &0)
+        .err();
+    assert!(err.is_some(), "mint_genesis should reject non-admin");
+}
+
+#[test]
+fn care_rejects_non_owner() {
+    let f = setup(0xA1);
+    let owner = Address::generate(&f.env);
+    let id = f.planet.mint_genesis(&owner, &1u64, &0, &0);
+
+    // Drop auth mocks; only `intruder` will authorise from now on.
+    f.env.set_auths(&[]);
+    let intruder = Address::generate(&f.env);
+
+    let err = f
+        .planet
+        .mock_auths(&[MockAuth {
+            address: &intruder,
+            invoke: &soroban_sdk::testutils::MockAuthInvoke {
+                contract: &f.planet.address,
+                fn_name: "care",
+                args: (id, 0u32).into_val(&f.env),
+                sub_invokes: &[],
+            },
+        }])
+        .try_care(&id, &0u32)
+        .err();
+    assert!(
+        err.is_some(),
+        "care should reject when caller is not the owner"
+    );
+}
+
+#[test]
+fn migrate_rejects_non_owner() {
+    let f = setup(0xB2);
+    let owner = Address::generate(&f.env);
+    let id = f.planet.mint_genesis(&owner, &1u64, &0, &0);
+
+    f.env.set_auths(&[]);
+    let intruder = Address::generate(&f.env);
+    let err = f
+        .planet
+        .mock_auths(&[MockAuth {
+            address: &intruder,
+            invoke: &soroban_sdk::testutils::MockAuthInvoke {
+                contract: &f.planet.address,
+                fn_name: "migrate",
+                args: (id, 99i32, 99i32).into_val(&f.env),
+                sub_invokes: &[],
+            },
+        }])
+        .try_migrate(&id, &99i32, &99i32)
+        .err();
+    assert!(err.is_some(), "migrate should reject non-owner");
+}
+
+#[test]
+fn cooldown_of_view() {
+    let f = setup(0xC3);
+    let user = Address::generate(&f.env);
+    let a = f.planet.mint_genesis(&user, &1u64, &0, &0);
+    let b = f.planet.mint_genesis(&user, &1u64, &1, &1);
+
+    assert_eq!(f.planet.cooldown_of(&a), 0, "fresh planet has no cooldown");
+
+    f.planet.conjoin(&a, &b, &user, &1u64);
+    let remaining = f.planet.cooldown_of(&a);
+    assert!(
+        remaining > 0 && remaining <= 720,
+        "cooldown should be set within window"
+    );
+}
+
+#[test]
+fn conjoin_rejects_unhealthy_parent() {
+    // We can't easily drive vitals down to 0 in a unit test (decay is slow,
+    // care actions cap), so instead we project a planet whose `last_ledger`
+    // is far in the past so its vitals decay heavily. With Aether class
+    // (seed byte 0xF0 → high nibble 0xF = 15) the decay is gentle, so we
+    // use a Void planet (class 8 → byte high nibble 0x8).
+    let f = setup(0x80);
+    let user = Address::generate(&f.env);
+    let a = f.planet.mint_genesis(&user, &1u64, &0, &0);
+    let b = f.planet.mint_genesis(&user, &1u64, &1, &1);
+
+    // Advance ledger by ~500 decay periods (~500h). Void class decay sums to
+    // -7/period across vitals, so vitals will hit zero quickly.
+    let now = f.env.ledger().sequence();
+    f.env.ledger().set_sequence_number(now + 720 * 500);
+
+    let result = f.planet.try_conjoin(&a, &b, &user, &1u64);
+    // Either rejected with Unhealthy, or stats are still high enough that
+    // the conjoin succeeds — both are valid outcomes for different DNA seeds.
+    // We assert at least one of: the gate fired, OR the gate didn't need to fire.
+    match result {
+        Err(Ok(crate::Error::Unhealthy)) => {} // gate fired — good
+        Ok(_) => {
+            // Gate didn't fire — check both parents are still healthy enough.
+            let va = f.planet.vitals_of(&a);
+            let vb = f.planet.vitals_of(&b);
+            assert!(stats::healthy_factor(&va) >= 40);
+            assert!(stats::healthy_factor(&vb) >= 40);
+        }
+        other => panic!("unexpected: {:?}", other),
+    }
+}

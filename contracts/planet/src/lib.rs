@@ -44,6 +44,11 @@ pub enum Error {
     Unhealthy = 8,
 }
 
+/// Emitted on every new planet creation (both genesis mint and conjoin
+/// child). Complements — does not replace — the OpenZeppelin `Mint` event
+/// that `Base::sequential_mint` fires for any NFT indexer. `Born` carries
+/// Cosmocopia-specific genetics: which drand round seeded the DNA and how
+/// many generations deep the lineage is.
 #[contractevent(topics = ["born"])]
 pub struct Born {
     pub id: u32,

@@ -44,18 +44,19 @@ Stats outside `[40, 220]` reduce conjunction success and add a "sickly" aura ove
 
 *The `/galaxy` page is a live 2D map of every minted planet at its on-chain `(x, y)`. Concentric dashed rings mark the five sectors; the same `r²` thresholds drive [`stats::project`](contracts/planet/src/stats.rs) so a planet's location actually shapes its decay. Pan with drag, zoom with the wheel, click a planet for stats + DNA + owner.*
 
-Each planet has `(x, y)` coordinates in an integer grid. The grid is partitioned into eight **sectors** that each apply stat drift modifiers:
+Each planet has `(x, y)` coordinates in an integer grid. The grid is partitioned into five **sectors** that each apply stat drift modifiers (boundaries are `r²` thresholds — integer math, no sqrt — see [`galaxy::sector_of`](contracts/planet/src/galaxy.rs)):
 
-- *Inner Core* — high gravity, slow decay
-- *Habitable Belt* — neutral, social bonus
-- *Asteroid Field* — biomass↓, rare-trait mint bonus
-- *Frontier* — spirit↑ from isolation
-- *Outer Dark* — temperature↓, exotic-trait bonus
-- *Nebula* — hydration↑, palette saturation bonus
-- *Singularity* — gravity↑↑, conjunction mutation rate↑
-- *Edge* — wildcard drift, generation bonus
+| Sector | `r <` | Drift on (temp, hydro, gravity, biomass, spirit) per period |
+| --- | --- | --- |
+| *Inner Core* | 5 | (+1, −1, +2, 0, 0) — high gravity, slow decay |
+| *Habitable Belt* | 15 | (0, 0, 0, +1, +1) — neutral, social bonus |
+| *Asteroid Field* | 30 | (0, −1, +1, −2, 0) — biomass↓ |
+| *Frontier* | 50 | (−1, 0, 0, −1, +2) — spirit↑ from isolation |
+| *Outer Dark* | ∞ | (−2, −1, −1, −1, −1) — harsh, exotic |
 
-Distance between two planets sets the **conjunction cost** and, indirectly, the mutation rate. Two neighbors yield cheap, conservative children; opposites yield expensive, exotic ones.
+Distance between two parents sets the **conjunction cost** (not yet implemented — see roadmap) and, indirectly, the mutation rate. Two neighbours yield cheap, conservative children; opposites yield expensive, exotic ones.
+
+Three additional sector ideas (*Nebula*, *Singularity*, *Edge*) are in the roadmap but not in the current contract — adding them is a one-line table extension in `stats.rs` plus a threshold in `galaxy.rs`.
 
 ## DNA layout (32 bytes)
 
