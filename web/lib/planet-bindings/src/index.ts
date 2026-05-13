@@ -34,7 +34,7 @@ if (typeof window !== "undefined") {
 export const networks = {
   testnet: {
     networkPassphrase: "Test SDF Network ; September 2015",
-    contractId: "CAN2QTAWXO3GR3H4H5HZRMAPPRAUBDBQHOB35373NHANAMQ47YKJPCPJ",
+    contractId: "CB2YFH74ZJDTWELOVK4JYL5LP4A6LCTPSDTDWIFDUDERXV2TPZ7UCKDK",
   }
 } as const
 
@@ -74,6 +74,7 @@ export interface Commitment {
  * `Genesis(x, y)` and `Conjoin(parent_a, parent_b)`.
  */
 export type CommitmentKind = {tag: "Genesis", values: readonly [i32, i32]} | {tag: "Conjoin", values: readonly [u32, u32]};
+
 
 
 /**
@@ -236,6 +237,14 @@ export interface Client {
    * Construct and simulate a coords_of transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
    */
   coords_of: ({id}: {id: u32}, options?: MethodOptions) => Promise<AssembledTransaction<Result<readonly [i32, i32]>>>
+
+  /**
+   * Construct and simulate a latent_of transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   * Return the recessive allele blob (R1 + R2 per trait slot). For
+   * planets minted before the dominance system shipped, returns 32 zero
+   * bytes — those legacy planets carry no recessives.
+   */
+  latent_of: ({id}: {id: u32}, options?: MethodOptions) => Promise<AssembledTransaction<Result<Buffer>>>
 
   /**
    * Construct and simulate a set_admin transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
@@ -524,10 +533,12 @@ export class Client extends ContractClient {
         "AAAAAAAAAOVSZXR1cm5zIHRoZSBvd25lciBvZiB0aGUgdG9rZW4gd2l0aCBgdG9rZW5faWRgLgoKIyBBcmd1bWVudHMKCiogYGVgIC0gQWNjZXNzIHRvIHRoZSBTb3JvYmFuIGVudmlyb25tZW50LgoqIGB0b2tlbl9pZGAgLSBUb2tlbiBJRCBhcyBhIG51bWJlci4KCiMgRXJyb3JzCgoqIFtgTm9uRnVuZ2libGVUb2tlbkVycm9yOjpOb25FeGlzdGVudFRva2VuYF0gLSBJZiB0aGUgdG9rZW4gZG9lcyBub3QKZXhpc3QuAAAAAAAACG93bmVyX29mAAAAAQAAAAAAAAAIdG9rZW5faWQAAAAEAAAAAQAAABM=",
         "AAAAAAAAAqBUcmFuc2ZlcnMgdGhlIHRva2VuIHdpdGggYHRva2VuX2lkYCBmcm9tIGBmcm9tYCB0byBgdG9gLgoKV0FSTklORzogQ29uZmlybWF0aW9uIHRoYXQgdGhlIHJlY2lwaWVudCBpcyBjYXBhYmxlIG9mIHJlY2VpdmluZyB0aGUKYE5vbi1GdW5naWJsZWAgaXMgdGhlIGNhbGxlcidzIHJlc3BvbnNpYmlsaXR5OyBvdGhlcndpc2UgdGhlIE5GVCBtYXkgYmUKcGVybWFuZW50bHkgbG9zdC4KCiMgQXJndW1lbnRzCgoqIGBlYCAtIEFjY2VzcyB0byB0aGUgU29yb2JhbiBlbnZpcm9ubWVudC4KKiBgZnJvbWAgLSBBY2NvdW50IG9mIHRoZSBzZW5kZXIuCiogYHRvYCAtIEFjY291bnQgb2YgdGhlIHJlY2lwaWVudC4KKiBgdG9rZW5faWRgIC0gVG9rZW4gSUQgYXMgYSBudW1iZXIuCgojIEVycm9ycwoKKiBbYE5vbkZ1bmdpYmxlVG9rZW5FcnJvcjo6SW5jb3JyZWN0T3duZXJgXSAtIElmIHRoZSBjdXJyZW50IG93bmVyCihiZWZvcmUgY2FsbGluZyB0aGlzIGZ1bmN0aW9uKSBpcyBub3QgYGZyb21gLgoqIFtgTm9uRnVuZ2libGVUb2tlbkVycm9yOjpOb25FeGlzdGVudFRva2VuYF0gLSBJZiB0aGUgdG9rZW4gZG9lcyBub3QKZXhpc3QuCgojIEV2ZW50cwoKKiB0b3BpY3MgLSBgWyJ0cmFuc2ZlciIsIGZyb206IEFkZHJlc3MsIHRvOiBBZGRyZXNzXWAKKiBkYXRhIC0gYFt0b2tlbl9pZDogdTMyXWAAAAAIdHJhbnNmZXIAAAADAAAAAAAAAARmcm9tAAAAEwAAAAAAAAACdG8AAAAAABMAAAAAAAAACHRva2VuX2lkAAAABAAAAAA=",
         "AAAAAAAAAAAAAAAJY29vcmRzX29mAAAAAAAAAQAAAAAAAAACaWQAAAAAAAQAAAABAAAD6QAAA+0AAAACAAAABQAAAAUAAAAD",
+        "AAAAAAAAALZSZXR1cm4gdGhlIHJlY2Vzc2l2ZSBhbGxlbGUgYmxvYiAoUjEgKyBSMiBwZXIgdHJhaXQgc2xvdCkuIEZvcgpwbGFuZXRzIG1pbnRlZCBiZWZvcmUgdGhlIGRvbWluYW5jZSBzeXN0ZW0gc2hpcHBlZCwgcmV0dXJucyAzMiB6ZXJvCmJ5dGVzIOKAlCB0aG9zZSBsZWdhY3kgcGxhbmV0cyBjYXJyeSBubyByZWNlc3NpdmVzLgAAAAAACWxhdGVudF9vZgAAAAAAAAEAAAAAAAAAAmlkAAAAAAAEAAAAAQAAA+kAAAPuAAAAIAAAAAM=",
         "AAAAAAAAAMNBZG1pbi1vbmx5OiByb3RhdGUgdGhlIGFkbWluIHRvIGEgbmV3IGFkZHJlc3MuIENsb3NlcyBhdWRpdCBIaWdoICMzICsKTWVkaXVtIHVwZ3JhZGUtcGF0aDogbGV0cyBhIGNvbXByb21pc2VkIGFkbWluIGJlIHJlcGxhY2VkLCBhbmQgbGV0cwp0aGUgcHJvamVjdCBtb3ZlIHRvIGEgbXVsdGlzaWcgbGF0ZXIgd2l0aG91dCByZWRlcGxveWluZy4AAAAACXNldF9hZG1pbgAAAAAAAAEAAAAAAAAACW5ld19hZG1pbgAAAAAAABMAAAABAAAD6QAAAAIAAAAD",
         "AAAAAAAAAHtBZG1pbi1vbmx5OiByb3RhdGUgdGhlIGRyYW5kIHZlcmlmaWVyIGFkZHJlc3MgKGF1ZGl0IENyaXRpY2FsICMzKS4KVXNlIHRoaXMgaWYgdGhlIGNhbm9uaWNhbCB2ZXJpZmllciBldmVyIG5lZWRzIHJlcGxhY2luZy4AAAAACXNldF9kcmFuZAAAAAAAAAEAAAAAAAAACW5ld19kcmFuZAAAAAAAABMAAAABAAAD6QAAAAIAAAAD",
         "AAAAAAAAAPVSZXR1cm5zIHRoZSBVbmlmb3JtIFJlc291cmNlIElkZW50aWZpZXIgKFVSSSkgZm9yIHRoZSB0b2tlbiB3aXRoCmB0b2tlbl9pZGAuCgojIEFyZ3VtZW50cwoKKiBgZWAgLSBBY2Nlc3MgdG8gdGhlIFNvcm9iYW4gZW52aXJvbm1lbnQuCiogYHRva2VuX2lkYCAtIFRva2VuIElEIGFzIGEgbnVtYmVyLgoKIyBOb3RlcwoKSWYgdGhlIHRva2VuIGRvZXMgbm90IGV4aXN0LCB0aGlzIGZ1bmN0aW9uIGlzIGV4cGVjdGVkIHRvIHBhbmljLgAAAAAAAAl0b2tlbl91cmkAAAAAAAABAAAAAAAAAAh0b2tlbl9pZAAAAAQAAAABAAAAEA==",
         "AAAAAAAAAAAAAAAJdml0YWxzX29mAAAAAAAAAQAAAAAAAAACaWQAAAAAAAQAAAABAAAD6QAAB9AAAAAGVml0YWxzAAAAAAAD",
+        "AAAABQAAARJFbWl0dGVkIG9uY2UgcGVyIHRyYWl0IHNsb3Qgd2hlbiBhIGNoaWxkJ3MgZXhwcmVzc2VkIEQgYnl0ZSBlcXVhbHMKbmVpdGhlciBwYXJlbnQncyB2aXNpYmxlIEQgZm9yIHRoYXQgc2xvdCDigJQgaS5lLiBhIGhpZGRlbiByZWNlc3NpdmUKc3VyZmFjZWQuIExldHMgb2ZmLWNoYWluIGluZGV4ZXJzIGJ1aWxkICJ5b3VyIHBsYW5ldCBpbmhlcml0ZWQgWCBmcm9tCmdyYW5kcGFyZW50IFkiIFVYIHdpdGhvdXQgcmUtcmVhZGluZyBib3RoIHBhcmVudCBsYXRlbnRzIChhdWRpdCBJNSkuAAAAAAAAAAAAEFJlY2Vzc2l2ZUVtZXJnZWQAAAABAAAACXJlY2Vzc2l2ZQAAAAAAAAMAAAAAAAAAAmlkAAAAAAAEAAAAAAAAAAAAAAALdHJhaXRfaW5kZXgAAAAABAAAAAAAAAAAAAAABmFsbGVsZQAAAAAABAAAAAAAAAAC",
         "AAAAAAAAAAAAAAALY29vbGRvd25fb2YAAAAAAQAAAAAAAAACaWQAAAAAAAQAAAABAAAABA==",
         "AAAAAAAAAPFSZXR1cm5zIHRoZSBhY2NvdW50IGFwcHJvdmVkIGZvciB0aGUgdG9rZW4gd2l0aCBgdG9rZW5faWRgLgoKIyBBcmd1bWVudHMKCiogYGVgIC0gQWNjZXNzIHRvIHRoZSBTb3JvYmFuIGVudmlyb25tZW50LgoqIGB0b2tlbl9pZGAgLSBUb2tlbiBJRCBhcyBhIG51bWJlci4KCiMgRXJyb3JzCgoqIFtgTm9uRnVuZ2libGVUb2tlbkVycm9yOjpOb25FeGlzdGVudFRva2VuYF0gLSBJZiB0aGUgdG9rZW4gZG9lcyBub3QKZXhpc3QuAAAAAAAADGdldF9hcHByb3ZlZAAAAAEAAAAAAAAACHRva2VuX2lkAAAABAAAAAEAAAPoAAAAEw==",
         "AAAAAAAAAtBSZXR1cm5zIHRoZSBgdG9rZW5faWRgIGF0IGEgZ2l2ZW4gYGluZGV4YCBpbiB0aGUgZ2xvYmFsIHRva2VuIGxpc3QuClVzZSBhbG9uZyB3aXRoIFtgTm9uRnVuZ2libGVFbnVtZXJhYmxlOjp0b3RhbF9zdXBwbHlgXSB0byBlbnVtZXJhdGUKYWxsIHRoZSB0b2tlbnMgaW4gdGhlIGNvbnRyYWN0LgoKQSBmdW5jdGlvbiB0byBnZXQgYWxsIHRva2VucyBvZiBhIGNvbnRyYWN0IGlzIG5vdCBwcm92aWRlZCBiZWNhdXNlIHRoYXQKd291bGQgYmUgdW5ib3VuZGVkLiBUbyBlbnVtZXJhdGUgYWxsIHRva2VucyBvZiBhIGNvbnRyYWN0LCB1c2UKW2BOb25GdW5naWJsZUVudW1lcmFibGU6OnRvdGFsX3N1cHBseWBdIHRvIGdldCB0aGUgdG90YWwgbnVtYmVyIG9mCnRva2VucyBhbmQgdGhlbiB1c2UgW2BOb25GdW5naWJsZUVudW1lcmFibGU6OmdldF90b2tlbl9pZGBdIHRvIHJldHJpZXZlCmVhY2ggdG9rZW4gb25lIGJ5IG9uZS4KCiMgQXJndW1lbnRzCgoqIGBlYCAtIEFjY2VzcyB0byB0aGUgU29yb2JhbiBlbnZpcm9ubWVudC4KKiBgaW5kZXhgIC0gSW5kZXggb2YgdGhlIHRva2VuIGluIHRoZSBnbG9iYWwgbGlzdC4KCiMgRXJyb3JzCgoqIFtgY3JhdGU6Om5vbl9mdW5naWJsZTo6Tm9uRnVuZ2libGVUb2tlbkVycm9yOjpUb2tlbk5vdEZvdW5kSW5HbG9iYWxMaXN0YF0gLSBXaGVuIHRoZSB0b2tlbgpJRCBpcyBub3QgZm91bmQgaW4gdGhlIGdsb2JhbCBlbnVtZXJhdGlvbi4AAAAMZ2V0X3Rva2VuX2lkAAAAAQAAAAAAAAAFaW5kZXgAAAAAAAAEAAAAAQAAAAQ=",
@@ -566,6 +577,7 @@ export class Client extends ContractClient {
         owner_of: this.txFromJSON<string>,
         transfer: this.txFromJSON<null>,
         coords_of: this.txFromJSON<Result<readonly [i32, i32]>>,
+        latent_of: this.txFromJSON<Result<Buffer>>,
         set_admin: this.txFromJSON<Result<void>>,
         set_drand: this.txFromJSON<Result<void>>,
         token_uri: this.txFromJSON<string>,

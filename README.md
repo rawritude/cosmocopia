@@ -159,9 +159,9 @@ The care button triggers a WebAuthn prompt; on confirmation, Smart Account Kit s
 
 ## Live deployment
 
-Contract: [`CAN2QTAWXO3GR3H4H5HZRMAPPRAUBDBQHOB35373NHANAMQ47YKJPCPJ`](https://stellar.expert/explorer/testnet/contract/CAN2QTAWXO3GR3H4H5HZRMAPPRAUBDBQHOB35373NHANAMQ47YKJPCPJ) on Stellar testnet.
+Contract: [`CB2YFH74ZJDTWELOVK4JYL5LP4A6LCTPSDTDWIFDUDERXV2TPZ7UCKDK`](https://stellar.expert/explorer/testnet/contract/CB2YFH74ZJDTWELOVK4JYL5LP4A6LCTPSDTDWIFDUDERXV2TPZ7UCKDK) on Stellar testnet. Carries the D/R1/R2 dominance allele system, audit fixes M1-M4, the `RecessiveEmerged` event, and game-audit F2/F9.
 
-Tests: **29 contract** (Rust, soroban-sdk testutils) + **17 frontend** (Vitest, mocked Client + wallet kits) + **16 art renderer** (Node test runner, deterministic + trait→pixel propagation). All green in CI.
+Tests: **40 contract** (Rust, soroban-sdk testutils) + **17 frontend** (Vitest, mocked Client + wallet kits) + **43 art renderer** (Node test runner, deterministic + trait→pixel propagation + rarity scorer + scene composer). All green in CI.
 
 ## Roadmap
 
