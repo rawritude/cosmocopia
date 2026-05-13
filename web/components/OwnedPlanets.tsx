@@ -64,68 +64,71 @@ export default function OwnedPlanets() {
   if (!effectiveAddress) return null;
 
   return (
-    <div className="panel" style={{ marginBottom: 'var(--space-6)' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', flexWrap: 'wrap' }}>
-        <h2 style={{ margin: 0 }}>
-          {isReadOnly ? 'preview' : 'your cosmocopia'}
-        </h2>
-        <button className="secondary" onClick={reload} disabled={loading}>
-          {loading ? 'refreshing…' : 'refresh'}
-        </button>
-        {!isReadOnly && planets && planets.length >= 2 && (
-          <button
-            className="secondary"
-            onClick={() => {
-              setConjoinMode((m) => !m);
-              setPicks([]);
-            }}
-          >
-            {conjoinMode ? 'cancel conjoin' : 'conjoin two planets'}
-          </button>
-        )}
-        {conjoinMode && picks.length === 2 && (
-          <button
-            disabled={conjoining}
-            onClick={async () => {
-              setConjoining(true);
-              setErr(null);
-              try {
-                await submitConjoin(picks[0], picks[1], state);
-                setPicks([]);
-                setConjoinMode(false);
-                await reload();
-              } catch (e: any) {
-                setErr(e?.message ?? String(e));
-              } finally {
-                setConjoining(false);
-              }
-            }}
-          >
-            {conjoining ? 'conjoining…' : `conjoin #${picks[0]} + #${picks[1]} →`}
-          </button>
-        )}
+    <div className="panel has-titlebar" style={{ marginBottom: 'var(--space-6)' }}>
+      <div className="panel-titlebar">
+        <span className="tb-title">{isReadOnly ? 'preview' : 'your cosmocopia'}</span>
+        <span className="tb-stripes" />
       </div>
-      <p className="note">
-        Live read from contract <code>{process.env.NEXT_PUBLIC_PLANET_CONTRACT?.slice(0, 6)}…</code> on testnet.
-        {' '}Address: <code title={effectiveAddress!}>{effectiveAddress!.slice(0, 6)}…{effectiveAddress!.slice(-4)}</code>
-        {isReadOnly && ' · read-only preview (connect a wallet to take care actions)'}
-      </p>
-      {err && <p className="errBox">{err}</p>}
-      {planets === null && !err && <p className="note">loading…</p>}
-      {planets && planets.length === 0 && (
+      <div className="panel-body">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', flexWrap: 'wrap', marginBottom: 'var(--space-3)' }}>
+          <button className="btn btn-secondary btn-sm" onClick={reload} disabled={loading}>
+            {loading ? 'refreshing…' : 'refresh'}
+          </button>
+          {!isReadOnly && planets && planets.length >= 2 && (
+            <button
+              className="btn btn-secondary btn-sm"
+              onClick={() => {
+                setConjoinMode((m) => !m);
+                setPicks([]);
+              }}
+            >
+              {conjoinMode ? 'cancel conjoin' : 'conjoin two planets'}
+            </button>
+          )}
+          {conjoinMode && picks.length === 2 && (
+            <button
+              className="btn btn-primary btn-sm"
+              disabled={conjoining}
+              onClick={async () => {
+                setConjoining(true);
+                setErr(null);
+                try {
+                  await submitConjoin(picks[0], picks[1], state);
+                  setPicks([]);
+                  setConjoinMode(false);
+                  await reload();
+                } catch (e: any) {
+                  setErr(e?.message ?? String(e));
+                } finally {
+                  setConjoining(false);
+                }
+              }}
+            >
+              {conjoining ? 'conjoining…' : `conjoin #${picks[0]} + #${picks[1]} →`}
+            </button>
+          )}
+        </div>
         <p className="note">
-          No planets at this address yet. The deployer holds the genesis batch — use{' '}
-          <code>scripts/deploy-testnet.sh</code> or invoke <code>mint_genesis</code> via the CLI.
+          Live read from contract <code>{process.env.NEXT_PUBLIC_PLANET_CONTRACT?.slice(0, 6)}…</code> on testnet.
+          {' '}Address: <code title={effectiveAddress!}>{effectiveAddress!.slice(0, 6)}…{effectiveAddress!.slice(-4)}</code>
+          {isReadOnly && ' · read-only preview (connect a wallet to take care actions)'}
         </p>
-      )}
-      {conjoinMode && (
-        <p className="note">
-          Pick two parents. Child is born at the midpoint of their coords, with
-          DNA crossed-over from theirs + drand-driven mutation.
-        </p>
-      )}
-      {planets && planets.length > 0 && (
-        <div className="gallery">
+        {err && <p className="errBox">{err}</p>}
+        {planets === null && !err && <p className="note">loading…</p>}
+        {planets && planets.length === 0 && (
+          <p className="note">
+            No planets at this address yet. The deployer holds the genesis batch — use{' '}
+            <code>scripts/deploy-testnet.sh</code> or invoke <code>mint_genesis</code> via the CLI.
+          </p>
+        )}
+        {conjoinMode && (
+          <p className="note">
+            Pick two parents. Child is born at the midpoint of their coords, with
+            DNA crossed-over from theirs + drand-driven mutation.
+          </p>
+        )}
+        {planets && planets.length > 0 && (
+          <div className="gallery">{/* card grid below */}
           {planets.map((p) => (
             <PlanetCard
               key={p.id}
@@ -154,8 +157,9 @@ export default function OwnedPlanets() {
               acting={acting?.id === p.id ? acting.action : null}
             />
           ))}
-        </div>
-      )}
+          </div>
+        )}
+      </div>
       {viewing && <PlanetView planet={viewing} onClose={() => setViewing(null)} />}
     </div>
   );
@@ -183,72 +187,70 @@ function PlanetCard({
   const v = planet.vitals;
   return (
     <div
-      className={`card ${conjoinMode ? 'pickable' : ''} ${picked ? 'picked' : ''}`}
+      className={`card has-titlebar ${conjoinMode ? 'pickable' : ''} ${picked ? 'picked' : ''}`}
       style={{ textAlign: 'left', cursor: conjoinMode ? 'pointer' : 'default' }}
       onClick={conjoinMode ? onPick : undefined}
     >
-      <div style={{ display: 'flex', justifyContent: 'center', position: 'relative' }}>
-        <PlanetSprite dna={planet.dna} scale={3} coords={planet.coords} />
-        <span className="rarityRow">
-          <RarityBadge dna={planet.dna} coords={planet.coords} size="sm" />
-        </span>
-        {picked && <span className="pickBadge">picked</span>}
+      <div className="card-titlebar">
+        <span style={{ flexShrink: 0 }}>#{planet.id}</span>
+        <span className="tb-stripes" />
+        <span style={{ flexShrink: 0, color: 'var(--stardust)' }}>({planet.coords.x}, {planet.coords.y})</span>
       </div>
-      <div
-        style={{
-          marginTop: 8,
-          fontSize: 11,
-          color: 'var(--stardust)',
-          fontFamily: 'var(--font-mono)',
-          letterSpacing: '0.05em',
-          textTransform: 'uppercase',
-        }}
-      >
-        #{planet.id} · ({planet.coords.x}, {planet.coords.y})
+      <div style={{ padding: 'var(--space-3)' }}>
+        <div style={{ display: 'flex', justifyContent: 'center', position: 'relative' }}>
+          <PlanetSprite dna={planet.dna} scale={3} coords={planet.coords} />
+          <span className="rarityRow">
+            <RarityBadge dna={planet.dna} coords={planet.coords} size="sm" />
+          </span>
+          {picked && <span className="pickBadge">picked</span>}
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-1)', marginTop: 'var(--space-2)' }}>
+          <Vital label="🔥" v={v.temperature} />
+          <Vital label="💧" v={v.hydration} />
+          <Vital label="🌑" v={v.gravity} />
+          <Vital label="🌱" v={v.biomass} />
+          <Vital label="✨" v={v.spirit} />
+        </div>
+        {!conjoinMode && (
+          <>
+            <div className="careRow">
+              {(['Warm', 'Rain', 'Tide', 'Tend', 'Reflect'] as CareName[]).map((a) => (
+                <button
+                  key={a}
+                  className="btn btn-secondary btn-sm"
+                  onClick={(e) => { e.stopPropagation(); onCare(a); }}
+                  disabled={readOnly || acting !== null}
+                  title={readOnly ? 'connect a wallet to take this action' : undefined}
+                >
+                  {acting === a ? '…' : a.toLowerCase()}
+                </button>
+              ))}
+            </div>
+            <button
+              className="btn btn-secondary btn-sm"
+              style={{ marginTop: 'var(--space-1)', width: '100%' }}
+              onClick={(e) => { e.stopPropagation(); onSurface(); }}
+            >
+              visit surface →
+            </button>
+          </>
+        )}
       </div>
-      <Vital label="🔥" v={v.temperature} />
-      <Vital label="💧" v={v.hydration} />
-      <Vital label="🌑" v={v.gravity} />
-      <Vital label="🌱" v={v.biomass} />
-      <Vital label="✨" v={v.spirit} />
-      {!conjoinMode && (
-        <>
-          <div className="careRow">
-            {(['Warm', 'Rain', 'Tide', 'Tend', 'Reflect'] as CareName[]).map((a) => (
-              <button
-                key={a}
-                className="secondary careBtn"
-                onClick={() => onCare(a)}
-                disabled={readOnly || acting !== null}
-                title={readOnly ? 'connect a wallet to take this action' : undefined}
-              >
-                {acting === a ? '…' : a.toLowerCase()}
-              </button>
-            ))}
-          </div>
-          <button
-            className="secondary careBtn"
-            style={{ marginTop: 4, width: '100%' }}
-            onClick={(e) => { e.stopPropagation(); onSurface(); }}
-          >
-            visit surface →
-          </button>
-        </>
-      )}
     </div>
   );
 }
 
 function Vital({ label, v }: { label: string; v: number }) {
   const pct = Math.max(0, Math.min(100, (v / 255) * 100));
-  const colour = v < 40 || v > 220 ? 'var(--mars)' : v < 100 ? 'var(--solar)' : 'var(--auroral)';
+  const state: 'good' | 'warn' | 'bad' =
+    v < 40 || v > 220 ? 'bad' : v < 100 ? 'warn' : 'good';
   return (
-    <div className="vitalRow">
-      <span className="vitalIcon">{label}</span>
-      <div className="vitalTrack">
-        <div className="vitalFill" style={{ width: `${pct}%`, background: colour }} />
+    <div className="vital">
+      <span className="vital-glyph">{label}</span>
+      <div className="vital-bar">
+        <div className="vital-fill" data-state={state} style={{ width: `${pct}%` }} />
       </div>
-      <span className="vitalValue">{v}</span>
+      <span className="vital-num">{v}</span>
     </div>
   );
 }

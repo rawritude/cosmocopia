@@ -9,18 +9,20 @@ export default function ConnectButton() {
 
   if (state.status === 'connected') {
     return (
-      <div className="walletChip">
-        <span className="dot" aria-hidden />
-        <span title={state.address}>{shortAddr(state.address)}</span>
-        <span className="walletLabel">via {state.label}</span>
-        <button className="secondary" onClick={disconnect}>disconnect</button>
+      <div style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+        <span className="chip">
+          <span className="dot" aria-hidden />
+          <span title={state.address}>{shortAddr(state.address)}</span>
+          <span style={{ color: 'var(--lumen)' }}>via {state.label}</span>
+        </span>
+        <button className="btn btn-ghost btn-sm" onClick={disconnect}>disconnect</button>
       </div>
     );
   }
 
   return (
     <>
-      <button onClick={() => setOpen(true)}>
+      <button className="btn btn-primary btn-sm" onClick={() => setOpen(true)}>
         {state.status === 'connecting' ? `connecting (${state.kind})…` : 'connect'}
       </button>
       {open && (
