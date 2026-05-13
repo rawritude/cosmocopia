@@ -121,6 +121,17 @@ pub struct Conjoin {
     pub drand_round: u64,
 }
 
+/// Emitted once per trait slot when a child's expressed D byte equals
+/// neither parent's visible D for that slot — i.e. a hidden recessive
+/// surfaced. Lets off-chain indexers build "your planet inherited X from
+/// grandparent Y" UX without re-reading both parent latents (audit I5).
+#[contractevent(topics = ["recessive"])]
+pub struct RecessiveEmerged {
+    pub id: u32,
+    pub trait_index: u32,
+    pub allele: u32,
+}
+
 #[contractevent(topics = ["care"])]
 pub struct Cared {
     pub id: u32,
@@ -338,16 +349,21 @@ impl PlanetContract {
 
         let seed = random_at(e, c.target_round)?;
         let child_id = Enumerable::sequential_mint(e, &c.to);
-        // Read parents' latent blobs with a zero fallback. Pre-dominance
-        // genesis planets have no latent stored — they contribute only
-        // visible alleles, which collapses the dominance roll to "always
-        // pick D" for that parent.
-        let latent_a = read_latent(e, parent_a);
-        let latent_b = read_latent(e, parent_b);
+        // Read parents' latent blobs with a *visible-DNA* fallback for
+        // pre-dominance genesis planets: when no Latent storage exists,
+        // synthesize a latent whose R1[i] = R2[i] = the parent's visible D
+        // byte for trait i. This collapses the dominance roll to "always
+        // contribute D" for that parent (instead of "70% D, 30% 0x00" which
+        // injected spurious zero-class/zero-surface alleles into descendant
+        // lineages — audit M3).
+        let latent_a = read_latent_for_breeding(e, parent_a, &dna_a);
+        let latent_b = read_latent_for_breeding(e, parent_b, &dna_b);
         let (child_dna, child_latent) = dna::crossover_with_latent(
             e,
-            &dna_a, &latent_a,
-            &dna_b, &latent_b,
+            &dna_a,
+            &latent_a,
+            &dna_b,
+            &latent_b,
             &seed,
             c.target_round,
             child_id,
@@ -394,6 +410,25 @@ impl PlanetContract {
             drand_round: c.target_round,
         }
         .publish(e);
+
+        // Audit I5: emit one event per trait slot where the child's
+        // expressed allele differs from BOTH parents' visible D — i.e. a
+        // hidden recessive surfaced. Cheap inline comparison; no extra
+        // storage reads since we still have parents' DNA in scope.
+        let child_bytes = child_dna.to_array();
+        let a_bytes = dna_a.to_array();
+        let b_bytes = dna_b.to_array();
+        for i in 0..dna::TRAIT_SLOTS {
+            let cd = child_bytes[i];
+            if cd != a_bytes[i] && cd != b_bytes[i] {
+                RecessiveEmerged {
+                    id: child_id,
+                    trait_index: i as u32,
+                    allele: cd as u32,
+                }
+                .publish(e);
+            }
+        }
 
         Ok(child_id)
     }
@@ -711,15 +746,36 @@ fn read_coords(e: &Env, id: u32) -> Result<(i32, i32), Error> {
 }
 
 /// Read a planet's latent blob with a zero fallback for legacy planets.
-/// Callers that *require* the latent to exist (rare — only used internally
-/// for breeding) should construct their own check, but for dominance rolls
-/// a zero latent collapses the math to "always pick D" for that parent
-/// which is the desired backwards-compat semantics.
+/// This is the *informational* read path (used by `latent_of`): legacy
+/// planets simply have no recessives recorded, so returning zeros is the
+/// most honest signal to off-chain indexers.
+///
+/// Breeding callers should use `read_latent_for_breeding` instead — see
+/// audit M3 for why a zero fallback is the wrong shape for crossover.
 fn read_latent(e: &Env, id: u32) -> BytesN<32> {
     e.storage()
         .persistent()
         .get(&DataKey::Latent(id))
         .unwrap_or_else(|| BytesN::from_array(e, &[0u8; 32]))
+}
+
+/// Read a planet's latent for use in `crossover_with_latent`. For planets
+/// with stored latents this is identical to `read_latent`. For pre-dominance
+/// legacy planets we synthesize a latent whose R1[i] = R2[i] = visible
+/// DNA[i] for each trait slot. With this shape, `sample_allele` returns
+/// the parent's visible D byte 100% of the time, instead of mixing in
+/// 0x00 from the zero fallback ~30% of the time (audit M3).
+fn read_latent_for_breeding(e: &Env, id: u32, dna: &BytesN<32>) -> BytesN<32> {
+    if let Some(latent) = e.storage().persistent().get(&DataKey::Latent(id)) {
+        return latent;
+    }
+    let d = dna.to_array();
+    let mut out = [0u8; dna::LATENT_LEN];
+    out[dna::LATENT_R1_OFFSET..dna::LATENT_R1_OFFSET + dna::TRAIT_SLOTS]
+        .copy_from_slice(&d[..dna::TRAIT_SLOTS]);
+    out[dna::LATENT_R2_OFFSET..dna::LATENT_R2_OFFSET + dna::TRAIT_SLOTS]
+        .copy_from_slice(&d[..dna::TRAIT_SLOTS]);
+    BytesN::from_array(e, &out)
 }
 
 fn check_cooldown(e: &Env, id: u32, now: u32) -> Result<(), Error> {

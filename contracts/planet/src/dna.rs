@@ -75,16 +75,25 @@ pub fn from_seed(env: &Env, seed: &BytesN<32>, round: u64, token_id: u32) -> Byt
 /// + token id. Returns 32 bytes laid out per `LATENT_*_OFFSET`.
 ///
 /// Latent slices use seed bytes 8..16 and 16..24 (independent from the
-/// visible trait bytes 0..7) plus a token_id stir so siblings born on the
-/// same round get distinct latents. Anti-grinding: the same commit-reveal
-/// scheme that protects visible DNA also protects these — the seed is
-/// drand-verified and the user commits before its round is published.
+/// visible trait bytes 0..7). The token_id is XORed into *every* trait
+/// byte of R1 and R2 plus the reserved tail so siblings born on the same
+/// drand round (i.e. same `target_round`) carry distinct R1/R2 alleles —
+/// closing audit M1. Anti-grinding: the same commit-reveal scheme that
+/// protects visible DNA also protects these — the seed is drand-verified
+/// and the user commits before its round is published.
 pub fn latent_from_seed(env: &Env, seed: &BytesN<32>, token_id: u32) -> BytesN<32> {
     let s = seed.to_array();
     let mut out = [0u8; LATENT_LEN];
     for i in 0..TRAIT_SLOTS {
         out[LATENT_R1_OFFSET + i] = s[(8 + i) % DNA_LEN];
         out[LATENT_R2_OFFSET + i] = s[(16 + i) % DNA_LEN];
+    }
+    // Stir token_id into the trait bytes themselves so same-round siblings
+    // diverge in the breeding-relevant slots, not just the reserved tail.
+    let id = token_id.to_le_bytes();
+    for i in 0..TRAIT_SLOTS {
+        out[LATENT_R1_OFFSET + i] ^= id[i & 3];
+        out[LATENT_R2_OFFSET + i] ^= id[(i + 1) & 3];
     }
     mix_token_id_into_latent(&mut out, token_id);
     BytesN::from_array(env, &out)
@@ -95,7 +104,8 @@ pub fn latent_from_seed(env: &Env, seed: &BytesN<32>, token_id: u32) -> BytesN<3
 /// Backwards-compat thin wrapper used by callers that don't (yet) read
 /// latent. Internally routes to crossover_with_latent passing all-zero
 /// latents for both parents, which collapses dominance probabilities back
-/// to "always pick D".
+/// to "always pick D". Kept around for tests and future call sites.
+#[allow(dead_code)]
 pub fn crossover(
     env: &Env,
     a: &BytesN<32>,
@@ -118,10 +128,11 @@ pub fn crossover(
 /// - The child's R2 is sampled from the union of both parents' R1/R2
 ///   pool so recessives keep flowing across generations even when not
 ///   expressed.
-/// - A ~2% mutation chance XORs a random byte into the child's D for
-///   the slot. Mutation does not touch the recessive layer.
+/// - A ~1.56% (1/64) mutation chance XORs a random byte into the child's
+///   D for the slot. Mutation does not touch the recessive layer.
 ///
 /// Returns (child_dna, child_latent).
+#[allow(clippy::too_many_arguments)]
 pub fn crossover_with_latent(
     env: &Env,
     a_dna: &BytesN<32>,
@@ -165,10 +176,10 @@ pub fn crossover_with_latent(
         ];
         let child_r2 = pool[(rr[24 + (i % 8)] & 0x03) as usize];
 
-        // Mutation: ~2% chance. Reuse rr[16+i] low bits (independent from
-        // the swap bit in the high bit).
+        // Mutation: ~1.56% chance (1/64). Reuse rr[16+i] low bits
+        // (independent from the swap bit in the high bit).
         let mut final_d = child_d;
-        if (rr[16 + i] & 0x3F) < 2 {
+        if (rr[16 + i] & 0x3F) < 1 {
             final_d ^= rr[(8 + i) % DNA_LEN];
         }
 
@@ -182,9 +193,7 @@ pub fn crossover_with_latent(
         out_dna[IDX_PARENT_MIX + i] = aa[i] ^ bb[i];
     }
     write_birth_round(&mut out_dna, round);
-    let child_gen = aa[IDX_GENERATION]
-        .max(bb[IDX_GENERATION])
-        .saturating_add(1);
+    let child_gen = aa[IDX_GENERATION].max(bb[IDX_GENERATION]).saturating_add(1);
     out_dna[IDX_GENERATION] = child_gen;
 
     // Inherit dominant affinity, mutate rarity.
@@ -209,8 +218,9 @@ pub fn crossover_with_latent(
 
 /// Sample one allele from (D, R1, R2) using `roll` as the entropy.
 ///
-/// Weights: 70% D, 22% R1, 8% R2. The thresholds are chosen so the byte
-/// distribution maps cleanly: 0..179 → D, 179..235 → R1, 235..256 → R2.
+/// Weights: 70 / 22 / 8 (thresholds 179 / 235), i.e. 69.92% D, 21.88% R1,
+/// 8.20% R2. The thresholds are chosen so the byte distribution maps
+/// cleanly: 0..179 → D, 179..235 → R1, 235..256 → R2.
 fn sample_allele(d: u8, r1: u8, r2: u8, roll: u8) -> u8 {
     if roll < 179 {
         d

@@ -359,14 +359,14 @@ fn mint_genesis_rejects_non_admin() {
             address: &bystander,
             invoke: &soroban_sdk::testutils::MockAuthInvoke {
                 contract: &f.planet.address,
-                fn_name: "mint_genesis",
+                fn_name: "commit_genesis",
                 args: (bystander.clone(), 1u64, 0i32, 0i32).into_val(&f.env),
                 sub_invokes: &[],
             },
         }])
         .try_commit_genesis(&bystander, &1u64, &0, &0)
         .err();
-    assert!(err.is_some(), "mint_genesis should reject non-admin");
+    assert!(err.is_some(), "commit_genesis should reject non-admin");
 }
 
 #[test]
@@ -687,12 +687,11 @@ fn dna_dominance_collapses_to_d_when_latents_zero() {
     let b = BytesN::from_array(&env, &[0xAA; 32]);
     let zero = BytesN::from_array(&env, &[0u8; 32]);
 
-    let (child_dna, _) =
-        dna::crossover_with_latent(&env, &a, &zero, &b, &zero, &rand, 0, 0);
+    let (child_dna, _) = dna::crossover_with_latent(&env, &a, &zero, &b, &zero, &rand, 0, 0);
     let bytes = child_dna.to_array();
-    for i in 0..dna::TRAIT_SLOTS {
+    for (i, byte) in bytes.iter().enumerate().take(dna::TRAIT_SLOTS) {
         assert_eq!(
-            bytes[i], 0xAA,
+            *byte, 0xAA,
             "trait byte {} should be 0xAA when both parents D match",
             i
         );
@@ -724,9 +723,8 @@ fn dna_dominance_can_express_recessive() {
     let latent_a = BytesN::from_array(&env, &latent_a);
     let latent_b = latent_a.clone();
 
-    let (child_dna, _) = dna::crossover_with_latent(
-        &env, &dna_a, &latent_a, &dna_b, &latent_b, &rand, 0, 0,
-    );
+    let (child_dna, _) =
+        dna::crossover_with_latent(&env, &dna_a, &latent_a, &dna_b, &latent_b, &rand, 0, 0);
     assert_eq!(child_dna.to_array()[0], 0xCC, "recessive should emerge");
 }
 
@@ -747,9 +745,8 @@ fn dna_dominance_carries_recessive_to_child_latent() {
     let latent_a = BytesN::from_array(&env, &latent_a);
     let latent_b = BytesN::from_array(&env, &[0u8; 32]);
 
-    let (_, child_latent) = dna::crossover_with_latent(
-        &env, &dna_a, &latent_a, &dna_b, &latent_b, &rand, 0, 0,
-    );
+    let (_, child_latent) =
+        dna::crossover_with_latent(&env, &dna_a, &latent_a, &dna_b, &latent_b, &rand, 0, 0);
     assert_eq!(
         child_latent.to_array()[dna::LATENT_R2_OFFSET],
         0xFF,
@@ -770,4 +767,184 @@ fn conjoin_via_full_flow_writes_latent_and_dna() {
     let child_latent = f.planet.latent_of(&child).to_array();
     // At least one byte should be non-zero in a non-trivial seed.
     assert!(child_latent.iter().any(|b| *b != 0));
+}
+
+// ---------- Audit fix regressions ----------
+
+#[test]
+fn audit_m1_same_round_siblings_have_distinct_latent_trait_bytes() {
+    // Two genesis planets minted from the SAME drand seed (same target_round)
+    // must end up with different R1/R2 trait bytes thanks to the token_id
+    // stir into bytes 0..16. Before the M1 fix, both siblings carried
+    // byte-identical trait alleles because mix_token_id_into_latent only
+    // touched the reserved tail (bytes 16..20).
+    let f = setup(0xAB);
+    let user = Address::generate(&f.env);
+    let a = mint_genesis(&f, &user, 0, 0);
+    let b = mint_genesis(&f, &user, 1, 1);
+    let lat_a = f.planet.latent_of(&a).to_array();
+    let lat_b = f.planet.latent_of(&b).to_array();
+
+    // At least one byte in the trait region (0..16) must differ.
+    let mut differs = false;
+    for i in 0..(dna::LATENT_R2_OFFSET + dna::TRAIT_SLOTS) {
+        if lat_a[i] != lat_b[i] {
+            differs = true;
+            break;
+        }
+    }
+    assert!(
+        differs,
+        "same-round siblings must carry distinct R1/R2 trait alleles (audit M1)"
+    );
+}
+
+#[test]
+fn audit_m2_mutation_rate_threshold_is_one() {
+    // With rr[16+i] & 0x3F == 0 the mutation gate must fire; with == 1 it
+    // must NOT (the new threshold is `< 1`). This pins down the post-fix
+    // 1.56% mutation rate and would have failed under the previous `< 2`.
+    let env = Env::default();
+    let a = BytesN::from_array(&env, &[0xAA; 32]);
+    let b = BytesN::from_array(&env, &[0xAA; 32]);
+    let zero = BytesN::from_array(&env, &[0u8; 32]);
+
+    // Case A: rr[16] = 0x00 → low 6 bits = 0 → mutation fires.
+    let mut rb = [0u8; 32];
+    rb[16] = 0x00;
+    rb[8] = 0x55; // XOR pad
+    let rand = BytesN::from_array(&env, &rb);
+    let (child, _) = dna::crossover_with_latent(&env, &a, &zero, &b, &zero, &rand, 0, 0);
+    assert_eq!(
+        child.to_array()[0],
+        0xAA ^ 0x55,
+        "rr[16] low6=0 must trigger mutation"
+    );
+
+    // Case B: rr[16] = 0x01 → low 6 bits = 1 → mutation does NOT fire.
+    // This previously triggered under the < 2 threshold; new < 1 leaves D.
+    let mut rb = [0u8; 32];
+    rb[16] = 0x01;
+    rb[8] = 0x55;
+    let rand = BytesN::from_array(&env, &rb);
+    let (child, _) = dna::crossover_with_latent(&env, &a, &zero, &b, &zero, &rand, 0, 0);
+    assert_eq!(
+        child.to_array()[0],
+        0xAA,
+        "rr[16] low6=1 must NOT trigger mutation post-M2"
+    );
+}
+
+#[test]
+fn audit_m3_legacy_parent_contributes_visible_d_not_zero() {
+    // Reproduce the legacy-parent path: parent A has DNA but no Latent in
+    // storage. The breeding path must synthesize a latent where R1=R2=D so
+    // sample_allele picks the parent's visible D byte 100% of the time
+    // instead of injecting 0x00 (~30% under the old zero fallback).
+    //
+    // We drive the conjoin's randomness so parent A's roll lands in the
+    // R1 range (179..235) and the swap_bit puts contrib_a into the child's
+    // expressed D. With the OLD zero fallback contrib_a = 0x00 and the
+    // child would land on 0x00; under the synthesized fallback contrib_a
+    // = A's visible D, so the child inherits A's D.
+    let f = setup(0xCC);
+    let user = Address::generate(&f.env);
+
+    let a = mint_genesis(&f, &user, 0, 0);
+    let b = mint_genesis(&f, &user, 5, 5);
+
+    // Strip A's latent so it looks like a pre-dominance legacy planet.
+    f.env.as_contract(&f.planet.address, || {
+        f.env
+            .storage()
+            .persistent()
+            .remove(&crate::DataKey::Latent(a));
+    });
+
+    let dna_a = f.planet.dna_of(&a).to_array();
+    assert_ne!(dna_a[0], 0x00, "fixture must give A a non-zero D[0]");
+
+    // Set the conjoin's randomness so:
+    //   rr[0] = 200 → parent A allele roll lands in R1 (179..235)
+    //   rr[8] = 0   → parent B allele roll lands in D (< 179)
+    //   rr[16] high bit = 0 → swap_bit = 0 → child_d = contrib_a
+    //   rr[16] low 6 bits = 60 → mutation gate fails
+    let mut rb = [0u8; 32];
+    rb[0] = 200;
+    rb[16] = 0x3C;
+    set_drand(
+        &f.env,
+        &f.drand_id,
+        200 + crate::LOOKAHEAD_ROUNDS,
+        0, // unused — we'll overwrite via raw mock below
+    );
+    // The mock stores the *last* `set_latest` regardless of round; use it
+    // to overwrite with our crafted random bytes.
+    let drand_client = MockDrandClient::new(&f.env, &f.drand_id);
+    drand_client.set_latest(&1u64, &BytesN::from_array(&f.env, &rb));
+
+    let child = conjoin(&f, a, b, &user);
+    let child_d0 = f.planet.dna_of(&child).to_array()[0];
+
+    // Under the OLD zero fallback this would be 0x00. Under the fix it
+    // is A's visible D byte (because synthesized R1[0] = visible D[0]).
+    assert_eq!(
+        child_d0, dna_a[0],
+        "legacy parent must contribute its visible D, not 0x00 (audit M3)"
+    );
+}
+
+#[test]
+fn audit_m4_allele_weights_doc_matches_implementation() {
+    // Verify the documented thresholds 179 and 235 produce the documented
+    // boundary behavior. This guards future tinkering: change either
+    // boundary and this test catches it.
+    let env = Env::default();
+    let zero = BytesN::from_array(&env, &[0u8; 32]);
+
+    // Parent A: D=0xAA, R1=0xBB, R2=0xCC. Parent B: D=0xDD (R1/R2 = 0).
+    // We sample only parent A's allele path by varying rr[0].
+    let mut dna_a_arr = [0u8; 32];
+    dna_a_arr[0] = 0xAA;
+    let dna_a = BytesN::from_array(&env, &dna_a_arr);
+    let mut lat_a_arr = [0u8; 32];
+    lat_a_arr[dna::LATENT_R1_OFFSET] = 0xBB;
+    lat_a_arr[dna::LATENT_R2_OFFSET] = 0xCC;
+    let lat_a = BytesN::from_array(&env, &lat_a_arr);
+
+    let mut dna_b_arr = [0u8; 32];
+    dna_b_arr[0] = 0xDD;
+    let dna_b = BytesN::from_array(&env, &dna_b_arr);
+
+    // rr[8] high (>=235) forces parent B to its R2 = 0x00. Then swap_bit
+    // = 0 (rr[16] high bit) puts contrib_a into child D.
+    // rr[16] low 6 bits = 60 (0xFC & 0x3F) blocks mutation.
+    fn check(
+        env: &Env,
+        roll_a: u8,
+        expected_a_contrib: u8,
+        dna_a: &BytesN<32>,
+        lat_a: &BytesN<32>,
+        dna_b: &BytesN<32>,
+        zero: &BytesN<32>,
+    ) {
+        let mut rb = [0u8; 32];
+        rb[0] = roll_a;
+        rb[8] = 240; // parent B → R2 = 0
+        rb[16] = 0x7C; // swap_bit = 0, mutation gate fails (low 6 = 60)
+        let rand = BytesN::from_array(env, &rb);
+        let (child, _) = dna::crossover_with_latent(env, dna_a, lat_a, dna_b, zero, &rand, 0, 0);
+        assert_eq!(
+            child.to_array()[0],
+            expected_a_contrib,
+            "roll {} should pick allele {:#04x}",
+            roll_a,
+            expected_a_contrib
+        );
+    }
+
+    check(&env, 178, 0xAA, &dna_a, &lat_a, &dna_b, &zero); // just under 179 → D
+    check(&env, 179, 0xBB, &dna_a, &lat_a, &dna_b, &zero); // at 179 → R1
+    check(&env, 234, 0xBB, &dna_a, &lat_a, &dna_b, &zero); // just under 235 → R1
+    check(&env, 235, 0xCC, &dna_a, &lat_a, &dna_b, &zero); // at 235 → R2
 }
