@@ -75,6 +75,9 @@ jobs:
       - name: Art tests
         run: npm --workspace @cosmocopia/art run test
 
+      - name: Web unit tests (vitest)
+        run: npm --workspace @cosmocopia/web run test
+
       - name: Build planet bindings (typecheck)
         working-directory: web/lib/planet-bindings
         run: npm install --silent && npx tsc --noEmit

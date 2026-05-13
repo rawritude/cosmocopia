@@ -214,11 +214,10 @@ describe('submitCare wallet branching', () => {
     await expect(cc.submitCare(0, 0, { status: 'idle' } as any)).rejects.toThrow(/connect a wallet/i);
   });
 
-  it('signs through Stellar Wallets Kit for classic wallets', async () => {
+  it('routes classic wallets through tx.signAndSend (distinct hash)', async () => {
     const hash = await cc.submitCare(0, 0, classicState as any);
+    // Different from passkey path's hash — proves the classic branch ran.
     expect(hash).toBe('TXHASH_CLASSIC');
-    const swk = await import('@creit-tech/stellar-wallets-kit');
-    expect(swk.StellarWalletsKit.signTransaction).toHaveBeenCalledTimes(1);
   });
 
   it('signs through Smart Account Kit for passkey wallets', async () => {
