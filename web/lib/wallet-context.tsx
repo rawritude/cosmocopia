@@ -60,7 +60,7 @@ async function ensureClassicKit() {
 }
 
 let passkeyKit: any = null;
-async function getPasskeyKit() {
+export async function getPasskeyKit(): Promise<any> {
   if (passkeyKit) return passkeyKit;
   const { SmartAccountKit, IndexedDBStorage } = await import('smart-account-kit');
   passkeyKit = new SmartAccountKit({

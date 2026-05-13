@@ -119,7 +119,9 @@ export type CareName = keyof typeof CARE;
 /// Submit a care action for the connected wallet. Returns the tx hash.
 ///
 /// - Classic (`G…`) wallets: build → sign via Wallets Kit → send via RPC.
-/// - Passkey (`C…`) smart accounts: not yet wired (executeAndSubmit lands in v2).
+/// - Passkey (`C…`) smart accounts: build with the kit's deployer key as the
+///   fee-payer source → `kit.signAndSubmit` handles WebAuthn auth-entry
+///   signing + re-simulation + fee-payer signature + submission.
 export async function submitCare(
   id: number,
   action: number,
@@ -128,13 +130,25 @@ export async function submitCare(
   if (wallet.status !== 'connected') {
     throw new Error('connect a wallet first');
   }
+
   if (wallet.kind === 'passkey') {
-    throw new Error(
-      'Passkey signing flow lands in v2. For now, please use a classic wallet (Freighter et al.) to send actions.',
-    );
+    const { getPasskeyKit } = await import('./wallet-context');
+    const kit = await getPasskeyKit();
+    const client = new Client({
+      contractId: CONTRACT,
+      networkPassphrase: PASSPHRASE,
+      rpcUrl: RPC,
+      // Smart account contract IDs (C…) aren't valid as tx sources; the kit's
+      // deterministic deployer G-key is — the kit later swaps in its own fee
+      // payer if needed via signAndSubmit.
+      publicKey: kit.deployerPublicKey,
+    });
+    const tx = await client.care({ id, action });
+    const result = await kit.signAndSubmit(tx);
+    return extractHash(result);
   }
 
-  // Build a fresh client bound to the user's source account for signing.
+  // Classic wallet (Freighter et al.)
   const swk = await import('@creit-tech/stellar-wallets-kit');
   const client = new Client({
     contractId: CONTRACT,
@@ -142,20 +156,24 @@ export async function submitCare(
     rpcUrl: RPC,
     publicKey: wallet.address,
     signTransaction: async (xdr: string) => {
-      const res = await swk.StellarWalletsKit.signTransaction(xdr, {
+      return await swk.StellarWalletsKit.signTransaction(xdr, {
         networkPassphrase: PASSPHRASE,
         address: wallet.address,
       });
-      return res;
     },
   });
 
   const tx = await client.care({ id, action });
   const sent = await tx.signAndSend();
-  // sendTransactionResponse → hash
-  const hash =
-    (sent as any).sendTransactionResponse?.hash ??
-    (sent as any).getTransactionResponse?.txHash ??
-    (sent as any).hash;
-  return String(hash ?? '');
+  return extractHash(sent);
+}
+
+function extractHash(result: unknown): string {
+  const r = result as Record<string, any>;
+  return String(
+    r?.hash ??
+    r?.sendTransactionResponse?.hash ??
+    r?.getTransactionResponse?.txHash ??
+    '',
+  );
 }

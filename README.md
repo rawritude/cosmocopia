@@ -116,6 +116,19 @@ The frontend offers both paths side-by-side. Users pick at connect time:
 
 Either identity is passed to the planet contract as the `to:` / owner address. Configure via `web/.env.local`.
 
+### Trying the passkey flow end-to-end
+
+For a passkey-owned smart account to actually *do* anything on chain, it needs to own a planet first (the contract's `care`/`conjoin` calls require the planet's owner to authorize). The seeded planets all start owned by the deployer. To hand one over:
+
+```bash
+# 1. Connect with a passkey at http://localhost:3030 → note the C... contract address
+# 2. Transfer one of the genesis planets to that address:
+bash scripts/transfer-planet.sh 1 CXXXXXXX...
+# 3. Refresh the page → your gallery now includes that planet → click a care button.
+```
+
+The care button triggers a WebAuthn prompt; on confirmation, Smart Account Kit signs the auth entry, re-simulates, and submits.
+
 ## Roadmap
 
 - [x] Repo scaffold + design
