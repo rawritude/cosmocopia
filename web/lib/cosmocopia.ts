@@ -32,7 +32,36 @@ export type Planet = {
   dna: Uint8Array;
   vitals: Vitals;
   coords: { x: number; y: number };
+  owner?: string;
 };
+
+/// Scan token ids upward and collect every planet that exists, regardless of
+/// owner. Used by the galaxy map. Stops after `missTolerance` consecutive
+/// missing ids — Soroban tokens are sequentially minted so a run of misses
+/// means we've walked past the live range.
+export async function listAllPlanets(
+  maxScan = 128,
+  missTolerance = 5,
+): Promise<Planet[]> {
+  const client = readClient();
+  const out: Planet[] = [];
+  let misses = 0;
+  for (let id = 0; id < maxScan; id++) {
+    let owner: string | null = null;
+    try {
+      const r = await client.owner_of({ token_id: id });
+      owner = r.result as unknown as string;
+      misses = 0;
+    } catch {
+      misses++;
+      if (misses >= missTolerance && out.length > 0) break;
+      continue;
+    }
+    const planet = await getPlanet(id);
+    if (planet) out.push({ ...planet, owner: owner ?? undefined });
+  }
+  return out;
+}
 
 /// Scan token ids upward and collect those owned by `address`. With no
 /// indexer in the project yet, this is a brute-force linear sweep — fine for

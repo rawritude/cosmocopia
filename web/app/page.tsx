@@ -1,11 +1,12 @@
 'use client';
 
 import { useState, useMemo } from 'react';
+import Link from 'next/link';
 import PlanetSprite from '../components/PlanetSprite';
 import Traits from '../components/Traits';
 import ConnectButton from '../components/ConnectButton';
 import OwnedPlanets from '../components/OwnedPlanets';
-import { WalletProvider, useWallet } from '../lib/wallet-context';
+import { WalletProvider } from '../lib/wallet-context';
 import { dnaToHex } from '@cosmocopia/art';
 
 function randomDna(): Uint8Array {
@@ -51,7 +52,10 @@ function PageInner() {
       <div className="hero">
         <h1>cosmocopia</h1>
         <span className="tag">tiny pixel worlds, on stellar testnet</span>
-        <span style={{ marginLeft: 'auto' }}><ConnectButton /></span>
+        <span style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
+          <Link href="/galaxy"><button className="secondary">galaxy →</button></Link>
+          <ConnectButton />
+        </span>
       </div>
       <p className="sub">
         Each planet is a 32-byte DNA string rendered programmatically.

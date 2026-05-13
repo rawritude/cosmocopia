@@ -39,6 +39,11 @@ Planets are not idle. Each has five vitals (0–255):
 Stats outside `[40, 220]` reduce conjunction success and add a "sickly" aura overlay to the rendered art. Care recipe differs by class — watering a Lava planet hurts it.
 
 ### Galaxy
+
+![Galaxy map](docs/galaxy.png)
+
+*The `/galaxy` page is a live 2D map of every minted planet at its on-chain `(x, y)`. Concentric dashed rings mark the five sectors; the same `r²` thresholds drive [`stats::project`](contracts/planet/src/stats.rs) so a planet's location actually shapes its decay. Pan with drag, zoom with the wheel, click a planet for stats + DNA + owner.*
+
 Each planet has `(x, y)` coordinates in an integer grid. The grid is partitioned into eight **sectors** that each apply stat drift modifiers:
 
 - *Inner Core* — high gravity, slow decay
