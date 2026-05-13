@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import PlanetSprite from './PlanetSprite';
+import PlanetView from './PlanetView';
+import RarityBadge from './RarityBadge';
 import { listOwnedPlanets, submitCare, submitConjoin, CARE, type CareName, type Planet } from '../lib/cosmocopia';
 import { useWallet } from '../lib/wallet-context';
 
@@ -14,6 +16,7 @@ export default function OwnedPlanets() {
   const [conjoinMode, setConjoinMode] = useState(false);
   const [picks, setPicks] = useState<number[]>([]);
   const [conjoining, setConjoining] = useState(false);
+  const [viewing, setViewing] = useState<Planet | null>(null);
 
   function togglePick(id: number) {
     setPicks((cur) => {
@@ -131,6 +134,7 @@ export default function OwnedPlanets() {
               conjoinMode={conjoinMode}
               picked={picks.includes(p.id)}
               onPick={() => togglePick(p.id)}
+              onSurface={() => setViewing(p)}
               onCare={async (action) => {
                 if (isReadOnly) {
                   setErr('Connect a wallet to take care actions.');
@@ -152,6 +156,7 @@ export default function OwnedPlanets() {
           ))}
         </div>
       )}
+      {viewing && <PlanetView planet={viewing} onClose={() => setViewing(null)} />}
     </div>
   );
 }
@@ -164,6 +169,7 @@ function PlanetCard({
   conjoinMode,
   picked,
   onPick,
+  onSurface,
 }: {
   planet: Planet;
   onCare: (action: CareName) => void;
@@ -172,6 +178,7 @@ function PlanetCard({
   conjoinMode: boolean;
   picked: boolean;
   onPick: () => void;
+  onSurface: () => void;
 }) {
   const v = planet.vitals;
   return (
@@ -181,7 +188,10 @@ function PlanetCard({
       onClick={conjoinMode ? onPick : undefined}
     >
       <div style={{ display: 'flex', justifyContent: 'center', position: 'relative' }}>
-        <PlanetSprite dna={planet.dna} scale={3} />
+        <PlanetSprite dna={planet.dna} scale={3} coords={planet.coords} />
+        <span className="rarityRow">
+          <RarityBadge dna={planet.dna} coords={planet.coords} size="sm" />
+        </span>
         {picked && <span className="pickBadge">picked</span>}
       </div>
       <div style={{ marginTop: 8, fontSize: 12, color: 'var(--dim)' }}>
@@ -193,19 +203,28 @@ function PlanetCard({
       <Vital label="🌱" v={v.biomass} />
       <Vital label="✨" v={v.spirit} />
       {!conjoinMode && (
-        <div className="careRow">
-          {(['Warm', 'Rain', 'Tide', 'Tend', 'Reflect'] as CareName[]).map((a) => (
-            <button
-              key={a}
-              className="secondary careBtn"
-              onClick={() => onCare(a)}
-              disabled={readOnly || acting !== null}
-              title={readOnly ? 'connect a wallet to take this action' : undefined}
-            >
-              {acting === a ? '…' : a.toLowerCase()}
-            </button>
-          ))}
-        </div>
+        <>
+          <div className="careRow">
+            {(['Warm', 'Rain', 'Tide', 'Tend', 'Reflect'] as CareName[]).map((a) => (
+              <button
+                key={a}
+                className="secondary careBtn"
+                onClick={() => onCare(a)}
+                disabled={readOnly || acting !== null}
+                title={readOnly ? 'connect a wallet to take this action' : undefined}
+              >
+                {acting === a ? '…' : a.toLowerCase()}
+              </button>
+            ))}
+          </div>
+          <button
+            className="secondary careBtn"
+            style={{ marginTop: 4, width: '100%' }}
+            onClick={(e) => { e.stopPropagation(); onSurface(); }}
+          >
+            visit surface →
+          </button>
+        </>
       )}
     </div>
   );
