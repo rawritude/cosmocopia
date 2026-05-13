@@ -66,6 +66,10 @@
       ]
     ],
     [],
+    [],
+    [],
+    [],
+    [],
     [
       [
         "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4",
@@ -181,7 +185,7 @@
                               "symbol": "value"
                             },
                             "val": {
-                              "bytes": "5555555555555555555555555555555555555555555555555555555555555555"
+                              "bytes": "c80000000000000000000000000000003c000000000000000000000000000000"
                             }
                           }
                         ]
@@ -344,7 +348,7 @@
               },
               "durability": "persistent",
               "val": {
-                "bytes": "5555555555555555000000000000006e00555555555555555555555555555555"
+                "bytes": "cccccccccccccccc000000000000006e00cccccccccccccccccccccccccccccc"
               }
             }
           },
@@ -371,7 +375,7 @@
               },
               "durability": "persistent",
               "val": {
-                "bytes": "5555555555555555000000000000006e00555455555555555555555555555555"
+                "bytes": "cccccccccccccccc000000000000006e00cccdcccccccccccccccccccccccccc"
               }
             }
           },
@@ -398,7 +402,7 @@
               },
               "durability": "persistent",
               "val": {
-                "bytes": "555555555555555500000000000000d201565755555555555555555555555555"
+                "bytes": "cccccccccccccccc00000000000000d201cc0200000000000000000000000000"
               }
             }
           },
@@ -635,40 +639,13 @@
                     "symbol": "Latent"
                   },
                   {
-                    "u32": 0
-                  }
-                ]
-              },
-              "durability": "persistent",
-              "val": {
-                "bytes": "5555555555555555555555555555555500000000000000000000000000000000"
-              }
-            }
-          },
-          "ext": "v0"
-        },
-        "live_until": 518408
-      },
-      {
-        "entry": {
-          "last_modified_ledger_seq": 0,
-          "data": {
-            "contract_data": {
-              "ext": "v0",
-              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
-              "key": {
-                "vec": [
-                  {
-                    "symbol": "Latent"
-                  },
-                  {
                     "u32": 1
                   }
                 ]
               },
               "durability": "persistent",
               "val": {
-                "bytes": "5455555554555555555555545555555401000000000000000000000000000000"
+                "bytes": "cdcccccccdcccccccccccccdcccccccd01000000000000000000000000000000"
               }
             }
           },
@@ -695,7 +672,7 @@
               },
               "durability": "persistent",
               "val": {
-                "bytes": "5555555555555555555555555555555502000000000000000000000000000000"
+                "bytes": "cccccccccccccccccccccccccccccccc02000000000000000000000000000000"
               }
             }
           },
