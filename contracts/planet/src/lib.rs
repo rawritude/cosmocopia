@@ -40,6 +40,11 @@ pub enum DataKey {
     /// folded into the Vitals struct — so pre-civ-tier planets keep
     /// deserializing. Absent ⇒ tier 0 (Primitive).
     CivTier(u32),
+    /// "One child per parent-pair" registry. Keyed by the *normalized* pair
+    /// `(min(a, b), max(a, b))` so order-flip lookups hit the same slot.
+    /// Value is `true` once a child has been minted from that pair — the
+    /// rule is forever. Persistent storage (TTL-extended on write).
+    SpentPair(u32, u32),
 }
 
 #[contracterror]
@@ -59,6 +64,11 @@ pub enum Error {
     UnknownCommitment = 11,
     CommitmentNotReady = 12,
     InvalidCommitmentKind = 13,
+    /// The (parent_a, parent_b) pair has already produced a child. The "one
+    /// child per combination" rule is global and order-insensitive: once
+    /// `(min, max)` is recorded in `SpentPair`, neither `commit_conjoin`
+    /// nor `reveal_conjoin` will accept that pair again.
+    PairAlreadySpent = 14,
 }
 
 /// Anti-grinding commit-reveal: two-step flow for mint_genesis and conjoin.
@@ -123,6 +133,17 @@ pub struct Conjoin {
     pub parent_a: u32,
     pub parent_b: u32,
     pub drand_round: u64,
+}
+
+/// Emitted once when a (parent_a, parent_b) pair produces its first (and
+/// only) child. Carries the *normalized* pair so off-chain indexers can
+/// cheaply look up "has this pair already been conjoined?" without needing
+/// to remember the orientation the caller used at commit time.
+#[contractevent(topics = ["pair_spent"])]
+pub struct PairSpent {
+    pub parent_a: u32,
+    pub parent_b: u32,
+    pub child_id: u32,
 }
 
 /// Emitted once per trait slot when a child's expressed D byte equals
@@ -321,6 +342,13 @@ impl PlanetContract {
         if parent_a == parent_b {
             return Err(Error::SameParent);
         }
+        // "One child per pair" — reject up front so we don't waste a
+        // commitment slot on a pair that can never reveal. The same check
+        // runs again in reveal_conjoin as defense in depth against two
+        // concurrent commits on the same pair landing back-to-back.
+        if is_pair_spent(e, parent_a, parent_b) {
+            return Err(Error::PairAlreadySpent);
+        }
         let owner_a = Base::owner_of(e, parent_a);
         let owner_b = Base::owner_of(e, parent_b);
         owner_a.require_auth();
@@ -375,6 +403,15 @@ impl PlanetContract {
         let now = e.ledger().sequence();
         if now < c.commit_ledger.saturating_add(MIN_REVEAL_DELAY_LEDGERS) {
             return Err(Error::CommitmentNotReady);
+        }
+        // Defense in depth: a second commitment on the same pair could have
+        // landed *and revealed* between this commit and this reveal. The
+        // commit-time check can't cover that race; this one does. Note the
+        // commitment was already consumed via `take_commitment` above so
+        // the caller can't retry — they'd need to commit afresh, which the
+        // commit-time gate will then block.
+        if is_pair_spent(e, parent_a, parent_b) {
+            return Err(Error::PairAlreadySpent);
         }
 
         let dna_a = read_dna(e, parent_a)?;
@@ -454,6 +491,12 @@ impl PlanetContract {
         // Re-extend parents' TTL since the conjoin reveal touched them.
         extend_planet_ttl(e, parent_a);
         extend_planet_ttl(e, parent_b);
+
+        // Burn the (parent_a, parent_b) pair: from now on the pair maps to
+        // this child_id and can never produce another. `mark_pair_spent`
+        // both writes the SpentPair slot and emits the PairSpent event so
+        // off-chain indexers see the rule fire in real time.
+        mark_pair_spent(e, parent_a, parent_b, child_id);
 
         let population = dna::population_of_latent(&child_latent.to_array()) as u32;
         Born {
@@ -946,4 +989,40 @@ fn midpoint(a: (i32, i32), b: (i32, i32)) -> (i32, i32) {
         ((a.0 as i64 + b.0 as i64) / 2) as i32,
         ((a.1 as i64 + b.1 as i64) / 2) as i32,
     )
+}
+
+/// Normalize a parent pair so `(a, b)` and `(b, a)` hash to the same
+/// SpentPair slot. Always returns `(min, max)`.
+fn normalize_pair(a: u32, b: u32) -> (u32, u32) {
+    if a <= b {
+        (a, b)
+    } else {
+        (b, a)
+    }
+}
+
+/// True if `(parent_a, parent_b)` (in either order) has already produced a
+/// child. Reads the persistent SpentPair slot.
+fn is_pair_spent(e: &Env, a: u32, b: u32) -> bool {
+    let (lo, hi) = normalize_pair(a, b);
+    e.storage().persistent().has(&DataKey::SpentPair(lo, hi))
+}
+
+/// Mark `(parent_a, parent_b)` as spent and emit the `PairSpent` event.
+/// Idempotent: re-marking the same pair just refreshes the TTL. The
+/// reveal-time `is_pair_spent` check above is the actual gate; this is the
+/// write side.
+fn mark_pair_spent(e: &Env, a: u32, b: u32, child_id: u32) {
+    let (lo, hi) = normalize_pair(a, b);
+    let key = DataKey::SpentPair(lo, hi);
+    e.storage().persistent().set(&key, &true);
+    e.storage()
+        .persistent()
+        .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
+    PairSpent {
+        parent_a: lo,
+        parent_b: hi,
+        child_id,
+    }
+    .publish(e);
 }
