@@ -61,17 +61,24 @@ Stats outside `[40, 220]` reduce conjunction success and add a "sickly" aura ove
 
 ### Planet view — visit the surface
 
-![Surface modal](docs/surface.png)
+![Surface side-view: HIVE × INDUSTRIAL planet at night with lit windows, mushroom-pink kelp, and tiny inhabitants along the horizon](docs/surface.png)
 
-Every card has a **`visit surface →`** button that opens a side-view scene rendered procedurally from the planet's DNA + current vitals: sky gradient atmosphere-tinted, sun arc + starfield driven by a 60-second day cycle, terrain band, trees/kelp/crystals, procedural buildings whose style varies by population (Humanoid / Aquatic / Avian / Crystalline / Subterranean / Hive — 6 types) + civ tier (Primitive → Agricultural → Industrial → Information → Spacefaring — 5 stages), and animated inhabitants (walk / fly / swim / burrow) bobbing along the horizon with footstep cycles and wing-flaps.
+Every planet card has a **`visit surface →`** button that opens a side-view scene rendered procedurally from the planet's DNA + current vitals. The example above is planet **#2** (HIVE population × INDUSTRIAL civ tier) at night: green Hive mound architecture with lit windows, pink kelp between the mounds, starfield up top, a sun setting off the left edge, and tiny inhabitants bobbing along the horizon. The full composition pipeline:
 
-Population is derived from DNA byte 18; civ tier from `(temperature + biomass + spirit) / 3`. Care actions that raise warmth + biomass + spirit progress the civilization.
+- **Sky** — gradient atmosphere-tinted (storm / aurora / sparkle / eclipse / toxic all alter the upper band)
+- **Celestials** — sun arc + dynamic starfield driven by a 60-second day cycle
+- **Terrain** — base band with pattern-driven scatter flecks
+- **Foliage** — trees / kelp / crystals (kind picked by population)
+- **Buildings** — style varies by population (Humanoid / Aquatic / Avian / Crystalline / Subterranean / Hive — 6 types) and civ tier (Primitive → Agricultural → Industrial → Information → Spacefaring — 5 stages). Height + count grow with civ tier.
+- **Inhabitants** — 2×2 silhouettes that walk / fly / swim / burrow depending on population, with footstep bobs and wing-flap animations.
+
+For v1 both population and civ tier are derived in the frontend (`art/src/scene.ts`): population from DNA byte 18 mod 6; civ tier from `(temperature + biomass + spirit) / 3`. The `contract-pop-civ` branch (in flight) promotes both on-chain — population becomes a real `D/R1/R2` allele triple in the latent blob, and civ tier becomes a per-planet `u8` that ratchets up via care + decays on neglect, with a class-aware signal so Crystal / Hollow / Void can also reach Spacefaring.
 
 ### Galaxy
 
-![Galaxy map](docs/galaxy.png)
+![Galaxy stage with SECTORS legend top-right and PLANET #0 detail bottom-right after click](docs/galaxy.png)
 
-*The `/galaxy` page is a **full-bleed stage** — the canvas fills the viewport edge-to-edge. SECTORS legend floats top-right; selected-planet detail surfaces bottom-right when you click a planet. Tiny uppercase hint chip in the bottom-left reports the planet count + controls. Concentric dashed rings mark the five sectors; the same `r²` thresholds drive [`stats::project`](contracts/planet/src/stats.rs) so a planet's location actually shapes its decay. Pan with drag, zoom with the wheel.*
+*The `/galaxy` page is a **full-bleed stage** — the canvas fills the viewport edge-to-edge. Two floating panels overlay it: **SECTORS** legend top-right (always visible, with the kit's solid-green title bar), and a **PLANET #N** detail panel bottom-right that appears when you click any planet — coords, sector, the five vitals, owner address, and the full DNA hex. A tiny uppercase hint chip in the bottom-left reports the planet count + controls. Concentric dashed rings mark the five sectors; the same `r²` thresholds drive [`stats::project`](contracts/planet/src/stats.rs) so a planet's location actually shapes its decay. Pan with drag, zoom with the wheel.*
 
 Each planet has `(x, y)` coordinates in an integer grid. The grid is partitioned into five **sectors** that each apply stat drift modifiers (boundaries are `r²` thresholds — integer math, no sqrt — see [`galaxy::sector_of`](contracts/planet/src/galaxy.rs)):
 
