@@ -42,11 +42,14 @@ jobs:
       - name: cargo test
         run: cargo test --workspace
 
-      - name: stellar contract build (optimized)
+      - name: stellar contract build + optimize
         run: |
           curl -fsSL https://github.com/stellar/stellar-cli/raw/main/install.sh | sh
           export PATH="$HOME/.cargo/bin:$PATH"
-          stellar contract build --optimize
+          stellar contract build
+          # Run optimize as a separate step — the CLI version pinned in CI does
+          # not honor `build --optimize` and silently emits only planet.wasm.
+          stellar contract optimize --wasm target/wasm32v1-none/release/planet.wasm
 
       - name: Verify optimized wasm size
         run: |
