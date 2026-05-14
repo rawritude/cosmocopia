@@ -292,3 +292,109 @@ CI gates: all green. WASM size 46,014 B / 50 KB cap.
 ---
 
 **Verdict: BLOCKED — `C-1` (Common-tier floor not enforced) and `H-1` (test that pretends to pin the invariant) must land before merge. `H-2` (coord-fallback degradation) is strongly recommended before merge but is bounded by the 10 XLM fee; if shipping under time pressure, accept it for testnet and gate it on a Phase 1.1 fix. `H-3` and `H-4` are tests/defense-in-depth and can land in the same follow-up commit.**
+
+---
+
+## Re-audit (round 2)
+
+Scope: 4 additive fix-up commits on top of the original audit commit `212896a`:
+
+- `b357db7` fix(contract): expand `clamp_first_light_dna` to enforce Common-tier floor (C-1)
+- `e700922` test: replace misleading FL tier test with seed-sweep + frontend floor (H-1)
+- `52b3c50` fix(contract): drop corner-fallback in `derive_first_light_coord` (H-2, M-5)
+- `9abf635` fix(contract): polish — commit race test, approve gate, typed error, comments (H-3, H-4, M-2, L-9)
+
+### Findings re-verified
+
+**C-1 — CLOSED.** `clamp_first_light_dna` (lib.rs:1395–1452) now clamps every byte the rarity scorer reads:
+
+- Rarity nibble (byte 17 low) ≤ 4 → `floor(/5)` contribution = 0
+- Class nibble (byte 0 high): mythic 14/15 deflected via `& 0b0111` → 6/7 (Jungle/Crystal — neither mythic nor exotic) ✓
+- Atmosphere idx (byte 2 high 3 bits): mythic {4, 6, 7} deflected via `& 0b011` → {0, 2, 3} (none/thick/storm, all outside RARE_ATMOSPHERES) ✓
+- Atmosphere density (byte 2 low 5 bits) capped at 27 — cuts +2 ✓
+- Feature idx (byte 3 high nibble): mythic {8, 9, 10} deflected → {0, 1, 2} ✓
+- Feature intensity (byte 3 low nibble) capped at 13 — cuts +2 ✓
+- Aura idx (byte 5 high 3 bits): mythic {5, 7} deflected via `& 0b011` → {1, 3} (halo/shadow, outside MYTHIC + RARE_AURAS) ✓
+- Aura intensity (byte 5 low 5 bits) capped at 27 — cuts +2 ✓
+- Moon count (byte 4 high 3 bits) capped at 1 → `min(3, max(0, 1-1)) = 0` ✓
+- Ring count (byte 1 low 3 bits) capped at 2 → `min(4, max(0, 2-2)) = 0` ✓
+
+Re-derived worst-case score (any seed, post-clamp, with First Light coords always in r² ≥ 10000 = Outer-Dark+rim):
+- G0 generation (always for First Light): +3
+- Class in EXOTIC_CLASS_IDS {8..=13} (NOT clamped by the deflector — only mythic 14/15 is): +2
+- Feature idx = 11 (archipelago, RARE_FEATURES, NOT clamped since 11 ∉ {8,9,10}): +1
+- Aura idx ∈ {4, 6} (pulse/static, RARE_AURAS, NOT clamped since {4,6} ∉ MYTHIC_AURA_IDS {5,7}): +1
+- Location: First Light coords have r² ≥ 10000 → rim bonus: +1
+- No combos trigger (would need mythic class or specific mythic atmosphere/aura)
+
+**Worst case = 8 points** (G0 +3, exotic class +2, rare feature +1, rare aura +1, rim +1). Rare cutoff = 12. **Safe with 4 points of headroom.**
+
+The dev's docstring claims "= 7" (lib.rs:1370). Off-by-one — it forgets the rim bonus that the strict r² ≥ 10000 gate always triggers. Non-blocking; the real worst-case 8 is still well below Rare 12.
+
+Rust seed-sweep test (`first_light_dna_stays_common_across_seed_sweep`, test.rs:1326–1439): asserts byte-level post-clamp invariants for every seed `[s; 32]` with `s ∈ 0..=0xFF`. Because the clamp is per-byte-independent and the sweep exercises every value for every byte the clamp touches, this DOES prove the byte-level invariant across the full 32-byte seed space. Note: if a future clamp change introduces cross-byte logic, this sweep would need to evolve.
+
+Frontend test (`web/lib/firstLightFloor.test.ts`): imports the actual `computeRarity` and runs it on a TypeScript mirror of the clamp for all 256 seeds. Asserts `tier === 'Common'` and `max score < 12`. Belt-and-suspenders coverage verified. Caveat: the test uses coords {42, 42} (r² = 3528 < 10000), so the +1 rim bonus is NOT exercised — the test's measured worst-case is 7 (matches the docstring claim), but the production worst-case is 8 (with rim). Since both are < 12, the assertion still holds; the gap is a test fidelity issue (see new finding N-2).
+
+End-to-end integration test (`first_light_reveal_yields_clamped_dna`, test.rs:1442–1487) confirms the clamp is wired up at reveal time for 4 representative seeds.
+
+**H-1 — CLOSED.** The misleading `first_light_tier_capped_at_common` is gone; the new sweep test pins the post-clamp invariant for every byte value across 256 seeds. The naming accurately reflects what it tests.
+
+**H-2 — PARTIAL.** The corner-fallback is **truly gone** (lib.rs:1492–1494 comment confirms, code at 1497–1504 contains no fallback branch). The salt-rotation budget is still bounded (`for salt in 0..FIRST_LIGHT_RETRY_BUDGET = 16`). The new test `first_light_coord_in_outer_dark` confirms FL coords always land in Outer Dark (r² ≥ 2500). No other code path hardcodes radius 60.
+
+However: the lattice math in the doc comments (lib.rs:279–295) is **materially wrong** — same blind-spot the original M-5 was supposed to fix. The comment claims "≈ 24_000 (≈ 60%) fall in Outer Dark" and "per-iteration success rate is roughly 60%". The code's actual acceptance gate is `r2 >= FIRST_LIGHT_RING_R2 = 10000`, which yields only **9,004** lattice points (22.3% of the 40,401 lattice). Per-iteration success ≈ 22%. P(all 16 salts fail) = 0.777^16 ≈ 1.8% in a no-collision steady state — about 1 in 50 honest claimers will exhaust their budget. Compare radius-60 original: 46% success, P(fail) ≈ 1.5e-5.
+
+Verified empirically (Python: 40401 total, 9004 with r² ≥ 10000).
+
+The audit's original H-2 recommendation envisioned "radius 100 → ~21,000 valid coords" assuming "valid" = Outer Dark (r² ≥ 2500, i.e., 32,576 points). The dev's stricter gate (r² ≥ FIRST_LIGHT_RING_R2 = 10000) pins FL coords to r ≥ 100, well into Outer Dark, but at the cost of 3.6× fewer valid coords. This is a tradeoff, not a bug — but the comment doesn't reflect it and the new finding N-1 flags it.
+
+**H-3 — CLOSED.** New test `first_light_two_commits_one_reveal_wins` (test.rs:1660–1726) really exercises the race:
+- Opens two distinct commitments for the same keeper (different `cid_a` / `cid_b`)
+- Reveals the first → succeeds, sets `FirstLightClaimed(keeper)`
+- Reveals the second → `Err(FirstLightAlreadyClaimed)` (the defensive check at lib.rs:556–562 fires AFTER `take_commitment`)
+- Asserts: `cid_a` slot is gone (consumed), `cid_b` slot **persists** (Soroban rollback restored the `remove` when `?` propagated the Err)
+
+The "dead-but-present storage" behavior is the actual on-chain semantics (verified by reading `take_commitment` at lib.rs:1240–1248: removes on Ok-path, rollback on Err). Test pins this explicitly.
+
+**H-4 — CLOSED.** The `approve` override at lib.rs:1175–1186 checks `is_soulbound(e, token_id)` and panics with `Error::SoulboundLocked` for locked tokens. `approve_for_all` is intentionally left at the default with a clear rationale in the doc comment (lib.rs:1169–1174): it's an operator-level grant (owner-wide), not per-token, and the soulbound gate at `transfer`/`transfer_from` still applies. Verified there is no other entrypoint that consumes approval state without re-checking soulbound (`grep -n "Enumerable::\|Base::"` shows no other transfer-style methods). Two tests pin the path: `soulbound_blocks_approve` (rejects on soulbound) and `approve_works_for_non_soulbound` (regression guard for the happy path).
+
+**M-2 — CLOSED.** New `Error::Uninitialized = 17` variant added (lib.rs:99) with a clear doc comment. Returned for both missing-slot lookups (`NativeToken` at lib.rs:497, `BurnAddress` at lib.rs:502). Test `first_light_uninitialized_native_token_errors_cleanly` (test.rs:1767–1790) simulates the missing slot and asserts the typed error. Error enum remains sequentially numbered 1..17, no collisions.
+
+**M-5 — NOT CLOSED.** The lattice comment was supposed to be corrected. It is now wrong in a new way — see N-1. The comment now says "≈ 24_000 (≈ 60%) fall in Outer Dark", but the actual gate accepts only 9,004 points (22.3%). The "120 lattice points" claim is gone; in its place is a different wrong number.
+
+**L-9 — CLOSED.** Comment at lib.rs:1403–1405 now accurately states the mapping (14→6 Jungle, 15→7 Crystal) and correctly notes "neither is in `EXOTIC_CLASS_IDS` (8..=13) so neither earns the +2 exotic bonus either."
+
+### New findings
+
+**N-1 (Medium) — `derive_first_light_coord` lattice comments are materially wrong; per-iteration success ~22%, not ~60%.** lib.rs:279–295 claims ≈24_000 valid points and ≈60% per-iteration success. Actual count under the code's `r2 >= FIRST_LIGHT_RING_R2 = 10000` gate is 9,004 points (22.3%). P(16 salts all fail) ≈ 1.8% per honest claimer — non-trivial for a paid (10 XLM) action. Two paths to close: (a) relax the gate to `r2 >= 2500` (the actual Outer-Dark threshold; would yield 32,576 valid points and ≈80% per-iteration success), or (b) keep the strict gate but rename `FIRST_LIGHT_RING_RADIUS` to `FIRST_LIGHT_MIN_RADIUS` (or similar) and update the comments to reflect the real numbers. This is M-5 still un-fixed in a different way.
+
+**N-2 (Low) — `web/lib/firstLightFloor.test.ts` uses stale coords and a stale comment.** Comment line 92–93 says "(50 <= r <= ~85 in the ±60 clamp)" — should be `±100` and `r ∈ [100, ~141]`. Test coords `{42, 42}` (r² = 3528) don't trigger the +1 rim bonus that all production FL coords now get. The bound the test exercises (worst-case 7) is therefore an under-bound; production worst-case is 8 (still < 12 Rare cutoff, so the assertion `score < 12` still holds, but the test is no longer faithful to the production path).
+
+**N-3 (Informational) — `clamp_first_light_dna` docstring (lib.rs:1370) claims worst-case = 7.** Actual worst-case under the production coord-gate (r² ≥ 10000 → +1 rim) is 8. Off-by-one. Non-blocking.
+
+**N-4 (Informational) — Atmosphere deflection docstring is internally inconsistent.** lib.rs:1379 says mythic {4, 6, 7} → {0, 0, 3} (none/none/storm). The actual mapping under `& 0b011` is {4→0, 6→2, 7→3} = {0, 2, 3} (none/thick/storm). The inline comment at lib.rs:1412 has the correct mapping. Header comment should be updated for consistency.
+
+### Regressions
+
+- **WASM size: 46,276 B / 50 KB** (was 46,014 B). Phase 1 fix-up added 262 B. Still under the 50 KB cap with ~3.7 KB headroom. No sustainability concern at this rate.
+- **Radius bump (60 → 100)**: no off-by-one with `galaxy::sector_of`. Outer Dark = r² ≥ 2500 (r ≥ 50); FL coords now r ≥ 100. FL coords are guaranteed in Outer Dark by transitivity. Verified `first_light_coord_in_outer_dark` test passes.
+- **`approve` override**: no break in the OZ NonFungibleToken trait surface. Regression test `approve_works_for_non_soulbound` confirms the happy path still works.
+- **256-seed sweep test**: completes in <0.01s (`cargo test` runs all 66 contract tests in 0.20s total). No CI threshold concern.
+- **`Error::Uninitialized = 17`**: sequentially numbered, no collision with existing codes (1..16).
+
+### CI gates (re-run)
+
+| Gate | Result |
+| --- | --- |
+| `cargo fmt --all -- --check` | PASS |
+| `cargo clippy --all-targets --workspace -- -D warnings` | PASS |
+| `cargo test` | **66 passed / 0 failed** (was 61) |
+| `stellar contract build` | PASS — `planet.optimized.wasm` = **46,276 B (45.19 KB)** under the 50 KB cap |
+| `npx tsc --noEmit` (web) | PASS |
+| `npm run test` (web / vitest) | **32 passed / 0 failed** (was 30) |
+| `npm run build` (web / next) | PASS |
+
+All green.
+
+---
+
+**Verdict: CLEARED PENDING — all 4 blocking findings (C-1, H-1, H-3, H-4) are closed; H-2 is functionally closed (corner-fallback gone, retry bounded, FL coords land in Outer Dark) but carries forward an unresolved comment-accuracy issue that morphs M-5 into a new Medium (N-1). N-1 is non-blocking for merge but should be addressed in a follow-up — either by relaxing the coord gate to the actual Outer-Dark threshold (recovering the ~80% per-iteration success the audit originally envisioned) or by correcting the comments to reflect the stricter gate the dev chose. N-2/N-3/N-4 are doc/test-fidelity issues, all non-blocking.**
