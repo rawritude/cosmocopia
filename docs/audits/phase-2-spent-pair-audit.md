@@ -189,3 +189,23 @@ Read-only check, by design. But the `extend_planet_ttl` pattern used elsewhere s
 ## Verdict
 
 CLEARED PENDING FIXES — H-1 (error code 14 collision with Phase 1's `FirstLightAlreadyClaimed`) must be resolved before merge to `main`, and M-3 (SpentPair TTL lapses after 30 days, silently breaking "rule is forever") should be discussed with the spec owner and either fixed or explicitly documented. M-1/M-2 are test-hygiene gaps that would be quick to close in this PR. Lows + Informationals are polish.
+
+---
+
+## Re-audit update — M-3 reclassified
+
+After fact-check with current Stellar protocol docs, M-3 is **reclassified from Medium to Informational**.
+
+Stellar testnet and mainnet both run Protocol 25 (as of Oct 2025 / Jan 2026). Per Protocol 23 (CAP-0066, "automatic restoration via InvokeHostFunctionOp"), archived persistent entries that appear in a transaction's footprint are auto-restored before contract execution. The Soroban CLI/SDK simulation populates the restore list automatically when it detects access to an archived entry. Critically:
+
+> "A Soroban transaction that has a key to an archived Persistent entry in the footprint will fail immediately during the apply stage prior to contract execution."
+
+This means there is **no path** for an attacker to make the contract see a previously-written SpentPair entry as `has() == false`:
+
+1. Standard SDK flow: simulator includes restore in footprint; auto-restore brings the entry back; contract reads `true`; rule fires.
+2. Custom footprint **with** archived key but **no** restore list: tx fails at apply stage, before contract code.
+3. Custom footprint **omitting** the archived key entirely: tx fails on footprint mismatch when the contract attempts `has(SpentPair)`.
+
+The "rule is forever" invariant holds in practice. The 30-day TTL is irrelevant to enforcement — only relevant to ongoing storage rent. No code change required.
+
+Reference: https://developers.stellar.org/docs/learn/fundamentals/contract-development/storage/state-archival
