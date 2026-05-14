@@ -1143,3 +1143,51 @@ fn audit_m4_allele_weights_doc_matches_implementation() {
     check(&env, 234, 0xBB, &dna_a, &lat_a, &dna_b, &zero); // just under 235 → R1
     check(&env, 235, 0xCC, &dna_a, &lat_a, &dna_b, &zero); // at 235 → R2
 }
+
+// ---------- Audit follow-up: M-2 (legacy parent population synthesis) ----------
+
+#[test]
+fn legacy_parent_contributes_visible_population_not_zero() {
+    // Audit M-2 (parallel to the M-3 fix for trait slots): a legacy parent
+    // with no stored latent must not inject pop = 0 into descendants. The
+    // breeding synthesis seeds latent[16/17/18] from visible DNA byte 18
+    // so `sample_allele` returns the parent's visible population 100% of
+    // the time. We exercise this through the full reveal_conjoin path
+    // because read_latent_for_breeding is the contract-level glue.
+    let f = setup(0x77);
+    let user = Address::generate(&f.env);
+
+    // Mint two planets seeded by the [0x77; 32] mock seed.
+    let a = mint_genesis(&f, &user, 0, 0);
+    let b = mint_genesis(&f, &user, 5, 5);
+
+    // Strip parent A's stored latent to simulate a pre-dominance planet.
+    f.env.as_contract(&f.planet.address, || {
+        f.env
+            .storage()
+            .persistent()
+            .remove(&crate::DataKey::Latent(a));
+    });
+
+    let child = conjoin(&f, a, b, &user);
+
+    // Both parents' visible DNA byte 18 was seeded from the mock seed +
+    // token-id stir. With the M-2 fix, the legacy parent contributes its
+    // visible population for 100% of its samples instead of injecting 0.
+    // The exact resulting pop is deterministic from the test seed but the
+    // invariant we pin is: it's NOT 0 (which would be the zero-injection
+    // failure mode).
+    let child_pop = f.planet.population_of(&child);
+    let parent_a_dna = f.planet.dna_of(&a).to_array();
+    let parent_a_visible_pop = parent_a_dna[crate::dna::IDX_RESERVED] % 6;
+    // The child either inherited the live parent B's pop or the legacy
+    // parent A's synthesized-from-visible pop. Both are valid; what's
+    // NOT valid is zero unless one of those happens to be zero too.
+    if parent_a_visible_pop != 0 {
+        assert_ne!(
+            child_pop, 0,
+            "legacy parent must contribute visible pop {:?}, not Humanoid via zero-injection",
+            parent_a_visible_pop
+        );
+    }
+}

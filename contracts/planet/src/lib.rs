@@ -431,10 +431,14 @@ impl PlanetContract {
             .persistent()
             .set(&DataKey::Vitals(child_id), &starting);
 
-        // Child civ_tier = min(parent_a.civ_tier, parent_b.civ_tier). A
-        // Spacefaring parent doesn't gift the child anything; care progress
-        // is earned per-planet. Both parents default to 0 if their tier
-        // wasn't recorded (legacy planet).
+        // Child civ_tier = min(parent_a.civ_tier, parent_b.civ_tier). The
+        // child can't exceed the *weaker* parent — a Primitive partner pins
+        // the child at Primitive even when conjoined with a Spacefaring one.
+        // Care progress beyond that is then earned per-planet. Both parents
+        // default to 0 if their tier wasn't recorded (legacy planet) — note
+        // that this means any conjoin with a legacy parent seeds the child
+        // at tier 0 regardless of the other parent (audit M-3 — documented,
+        // not changed in this pass; see test conjoin_with_legacy_parent_*).
         let tier_a = read_civ_tier(e, parent_a);
         let tier_b = read_civ_tier(e, parent_b);
         let child_tier = tier_a.min(tier_b);
@@ -878,10 +882,16 @@ fn read_latent(e: &Env, id: u32) -> BytesN<32> {
 
 /// Read a planet's latent for use in `crossover_with_latent`. For planets
 /// with stored latents this is identical to `read_latent`. For pre-dominance
-/// legacy planets we synthesize a latent whose R1[i] = R2[i] = visible
-/// DNA[i] for each trait slot. With this shape, `sample_allele` returns
-/// the parent's visible D byte 100% of the time, instead of mixing in
-/// 0x00 from the zero fallback ~30% of the time (audit M3).
+/// legacy planets we synthesize a latent so the parent contributes its
+/// visible D for every allele slot instead of injecting 0x00.
+///
+/// - Trait slots 0..7: R1[i] = R2[i] = visible DNA[i]. Mirrors audit M3.
+/// - Population slot (latent 16/17/18): R1 = R2 = D = visible DNA[18].
+///   Byte 18 is the same one `derivePopulation` reads in the frontend, so
+///   legacy parents contribute the population they already display.
+///
+/// With this shape, `sample_allele` returns the parent's visible D byte
+/// 100% of the time for both trait slots and population.
 fn read_latent_for_breeding(e: &Env, id: u32, dna: &BytesN<32>) -> BytesN<32> {
     if let Some(latent) = e.storage().persistent().get(&DataKey::Latent(id)) {
         return latent;
@@ -892,19 +902,26 @@ fn read_latent_for_breeding(e: &Env, id: u32, dna: &BytesN<32>) -> BytesN<32> {
         .copy_from_slice(&d[..dna::TRAIT_SLOTS]);
     out[dna::LATENT_R2_OFFSET..dna::LATENT_R2_OFFSET + dna::TRAIT_SLOTS]
         .copy_from_slice(&d[..dna::TRAIT_SLOTS]);
+    // Population trio — seed D/R1/R2 from visible DNA byte 18 so legacy
+    // descendants don't all collapse to pop=0 (Humanoid). Closes audit M-2.
+    let pop_seed = d[dna::IDX_RESERVED];
+    out[dna::LATENT_POP_D] = pop_seed;
+    out[dna::LATENT_POP_R1] = pop_seed;
+    out[dna::LATENT_POP_R2] = pop_seed;
     BytesN::from_array(e, &out)
 }
 
 /// Read a planet's stored civ_tier with a 0 fallback for legacy / pre-civ-tier
 /// planets. Stored as u32 (Soroban's persistent storage doesn't accept u8
-/// directly); narrowed to u8 here because the public range is 0..=4.
+/// directly); narrowed to u8 here and clamped to the public range 0..=4 so
+/// any out-of-range value already in storage can't surface as garbage.
 fn read_civ_tier(e: &Env, id: u32) -> u8 {
     let raw: u32 = e
         .storage()
         .persistent()
         .get(&DataKey::CivTier(id))
         .unwrap_or(0u32);
-    raw as u8
+    core::cmp::min(raw, 4) as u8
 }
 
 fn check_cooldown(e: &Env, id: u32, now: u32) -> Result<(), Error> {

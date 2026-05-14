@@ -115,13 +115,10 @@ pub fn latent_from_seed(env: &Env, seed: &BytesN<32>, token_id: u32) -> BytesN<3
     }
     // Population gene D/R1/R2 (bytes 16/17/18). Use seed bytes 24/25/26 —
     // independent from the trait slot bytes used above — and stir token_id
-    // in so same-round siblings get distinct populations. Inlined here
-    // instead of going through mix_token_id_into_latent because that helper
-    // touches the same byte range and we don't want to double-stir.
+    // in so same-round siblings get distinct populations.
     out[LATENT_POP_D] = s[24] ^ id[0];
     out[LATENT_POP_R1] = s[25] ^ id[1];
     out[LATENT_POP_R2] = s[26] ^ id[2];
-    mix_token_id_into_latent(&mut out, token_id);
     BytesN::from_array(env, &out)
 }
 
@@ -270,10 +267,12 @@ pub fn crossover_with_latent(
     let affinity = if (rr[25] & 1) == 0 { aff_a } else { aff_b };
     out_dna[IDX_AFFINITY_RARITY] = affinity | (rarity & 0x0F);
 
-    // Unique salt: stir rand into bytes 18..32 + XOR child token id.
+    // Unique salt: stir rand into bytes 18..32 + XOR child token id. The
+    // latent's trait slots and population trio already carry their own
+    // token_id stir from the per-byte writes above, so no separate latent
+    // stir is needed here.
     out_dna[IDX_RESERVED..DNA_LEN].copy_from_slice(&rr[IDX_RESERVED..DNA_LEN]);
     mix_token_id_into_salt(&mut out_dna, token_id);
-    mix_token_id_into_latent(&mut out_latent, token_id);
 
     (
         BytesN::from_array(env, &out_dna),
@@ -307,14 +306,6 @@ fn mix_token_id_into_salt(out: &mut [u8; DNA_LEN], token_id: u32) {
     out[IDX_RESERVED + 3] ^= id[3];
 }
 
-/// Same idea for the latent blob — XOR token id into the still-reserved tail
-/// so siblings get distinct latents in the unused region too.
-///
-/// The population gene at bytes 16/17/18 is stirred separately (see
-/// `latent_from_seed` / `crossover_with_latent`) because double-stirring
-/// would cancel out the dedicated entropy. So we only touch byte 19 here —
-/// the first byte of the still-reserved tail (19..32).
-fn mix_token_id_into_latent(out: &mut [u8; LATENT_LEN], token_id: u32) {
-    let id = token_id.to_le_bytes();
-    out[19] ^= id[3];
-}
+// (mix_token_id_into_latent removed — every byte the helper touched is now
+// either stirred in-place by the per-byte writes above, or sits in the
+// still-reserved tail that nothing reads.)

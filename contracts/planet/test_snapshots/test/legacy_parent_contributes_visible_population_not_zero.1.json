@@ -67,9 +67,6 @@
     ],
     [],
     [],
-    [],
-    [],
-    [],
     [
       [
         "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4",
@@ -98,6 +95,7 @@
         }
       ]
     ],
+    [],
     [],
     []
   ],
@@ -185,7 +183,7 @@
                               "symbol": "value"
                             },
                             "val": {
-                              "bytes": "c80000000000000000000000000000003c000000000000000000000000000000"
+                              "bytes": "7777777777777777777777777777777777777777777777777777777777777777"
                             }
                           }
                         ]
@@ -429,7 +427,7 @@
               },
               "durability": "persistent",
               "val": {
-                "bytes": "cccccccccccccccc000000000000006e00cccccccccccccccccccccccccccccc"
+                "bytes": "7777777777777777000000000000006e00777777777777777777777777777777"
               }
             }
           },
@@ -456,7 +454,7 @@
               },
               "durability": "persistent",
               "val": {
-                "bytes": "cccccccccccccccc000000000000006e00cccdcccccccccccccccccccccccccc"
+                "bytes": "7777777777777777000000000000006e00777677777777777777777777777777"
               }
             }
           },
@@ -483,7 +481,7 @@
               },
               "durability": "persistent",
               "val": {
-                "bytes": "cccccccccccccccc00000000000000d201cc0200000000000000000000000000"
+                "bytes": "777777777777777700000000000000d201787577777777777777777777777777"
               }
             }
           },
@@ -726,7 +724,7 @@
               },
               "durability": "persistent",
               "val": {
-                "bytes": "cdcccccccdcccccccccccccdcccccccdcdcccc00000000000000000000000000"
+                "bytes": "7677777776777777777777767777777676777700000000000000000000000000"
               }
             }
           },
@@ -753,7 +751,7 @@
               },
               "durability": "persistent",
               "val": {
-                "bytes": "cccccccccccccccccccccccccccccccccccdcc00000000000000000000000000"
+                "bytes": "7777777777777777777777767777777677767700000000000000000000000000"
               }
             }
           },
