@@ -148,6 +148,57 @@ fn effect(class: u8, action: Care) -> (i32, i32, i32, i32, i32) {
     }
 }
 
+/// Weighted vital contribution. `w` is a percentage numerator (0..=100) — so
+/// `w_pct(255, 60)` returns `153` (255 * 0.6). Soroban is no_std + no float
+/// so we use a u16 intermediate with a fixed /100 divisor.
+fn w_pct(v: u32, w: u32) -> u8 {
+    ((v * w) / 100) as u8
+}
+
+/// Class-aware "civilization signal" in 0..=255. Buckets to 5 civ tiers via
+/// `signal / 51` (so 0..50 → 0, 51..101 → 1, … 204..255 → 4).
+///
+/// Weights are tuned so Crystal/Hollow/Void can reach Spacefaring under
+/// their *thriving* vital profile (close game-audit F15: under an
+/// unweighted average those classes' decay floor would never let them
+/// reach the top tier). Each branch's weights sum to 100 so the integer
+/// math stays within u8 (max term `255 * 100 / 100 = 255`, and per-branch
+/// terms sum to at most `255`).
+pub fn civ_signal(v: &Vitals, class: u8) -> u8 {
+    let class = class & 0x0F;
+    // Inverted readings used by classes whose thriving profile is "low" of
+    // a vital (Crystal/Quartz on hydration, Hollow/Void on biomass/temp).
+    let inv = |x: u32| 255u32.saturating_sub(x);
+    match class {
+        // Bloom (10), Jungle (6), Ocean (2) — biomass-thriving.
+        10 | 6 | 2 => w_pct(v.biomass, 60)
+            .saturating_add(w_pct(v.spirit, 25))
+            .saturating_add(w_pct(v.temperature, 15)),
+        // Lava (3), Cinder (11), Forge (9) — heat-thriving.
+        3 | 11 | 9 => w_pct(v.temperature, 60)
+            .saturating_add(w_pct(v.spirit, 25))
+            .saturating_add(w_pct(v.gravity, 15)),
+        // Crystal (7), Quartz (13) — low-hydration-thriving (sand temple vibes).
+        7 | 13 => w_pct(inv(v.hydration), 50)
+            .saturating_add(w_pct(v.gravity, 25))
+            .saturating_add(w_pct(v.spirit, 25)),
+        // Hollow (14), Void (8) — inverted biomass + low temp thriving.
+        14 | 8 => w_pct(inv(v.biomass), 50)
+            .saturating_add(w_pct(inv(v.temperature), 25))
+            .saturating_add(w_pct(v.spirit, 25)),
+        // Ice (4), Mist (12), Gas (1), Aether (15) — spirit-thriving exotic.
+        4 | 12 | 1 | 15 => w_pct(v.spirit, 50)
+            .saturating_add(w_pct(v.gravity, 25))
+            .saturating_add(w_pct(v.hydration, 25)),
+        // Rocky (0), Desert (5) and any fallthrough — balanced average.
+        _ => w_pct(v.temperature, 20)
+            .saturating_add(w_pct(v.hydration, 20))
+            .saturating_add(w_pct(v.gravity, 20))
+            .saturating_add(w_pct(v.biomass, 20))
+            .saturating_add(w_pct(v.spirit, 20)),
+    }
+}
+
 /// Conjunction success modifier — 0 if any vital is critical, 100 if all healthy.
 pub fn healthy_factor(v: &Vitals) -> u32 {
     let mut score = 0u32;

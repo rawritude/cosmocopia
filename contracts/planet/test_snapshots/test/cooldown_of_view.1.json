@@ -234,6 +234,87 @@
               "key": {
                 "vec": [
                   {
+                    "symbol": "CivTier"
+                  },
+                  {
+                    "u32": 0
+                  }
+                ]
+              },
+              "durability": "persistent",
+              "val": {
+                "u32": 0
+              }
+            }
+          },
+          "ext": "v0"
+        },
+        "live_until": 518408
+      },
+      {
+        "entry": {
+          "last_modified_ledger_seq": 0,
+          "data": {
+            "contract_data": {
+              "ext": "v0",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
+              "key": {
+                "vec": [
+                  {
+                    "symbol": "CivTier"
+                  },
+                  {
+                    "u32": 1
+                  }
+                ]
+              },
+              "durability": "persistent",
+              "val": {
+                "u32": 0
+              }
+            }
+          },
+          "ext": "v0"
+        },
+        "live_until": 518416
+      },
+      {
+        "entry": {
+          "last_modified_ledger_seq": 0,
+          "data": {
+            "contract_data": {
+              "ext": "v0",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
+              "key": {
+                "vec": [
+                  {
+                    "symbol": "CivTier"
+                  },
+                  {
+                    "u32": 2
+                  }
+                ]
+              },
+              "durability": "persistent",
+              "val": {
+                "u32": 0
+              }
+            }
+          },
+          "ext": "v0"
+        },
+        "live_until": 518424
+      },
+      {
+        "entry": {
+          "last_modified_ledger_seq": 0,
+          "data": {
+            "contract_data": {
+              "ext": "v0",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
+              "key": {
+                "vec": [
+                  {
                     "symbol": "Coords"
                   },
                   {
@@ -642,7 +723,7 @@
               },
               "durability": "persistent",
               "val": {
-                "bytes": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c300000000000000000000000000000000"
+                "bytes": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c300000000000000000000000000"
               }
             }
           },
@@ -669,7 +750,7 @@
               },
               "durability": "persistent",
               "val": {
-                "bytes": "c2c3c3c3c2c3c3c3c3c3c3c2c3c3c3c201000000000000000000000000000000"
+                "bytes": "c2c3c3c3c2c3c3c3c3c3c3c2c3c3c3c2c2c3c300000000000000000000000000"
               }
             }
           },
@@ -696,7 +777,7 @@
               },
               "durability": "persistent",
               "val": {
-                "bytes": "c3c3c3c3c3c3c3c3c3c3c3c2c3c3c3c202000000000000000000000000000000"
+                "bytes": "c3c3c3c3c3c3c3c3c3c3c3c2c3c3c3c2c3c3c300000000000000000000000000"
               }
             }
           },
