@@ -17,6 +17,10 @@ cd "$(dirname "$0")/.."
 
 ID="${1:-cosmocopia-deployer}"
 DRAND="CAESC7SC5EW5P2P3IM5Q7E64ZNDATVSN5F57NTCH5E7GJRPDM76KF7QM"
+# Native XLM Stellar Asset Contract on testnet. Used by claim_first_light
+# (Phase 1) to charge the 10-XLM observation fee. Override via env var if
+# the contract id ever rotates.
+NATIVE_TOKEN="${NATIVE_TOKEN:-CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC}"
 
 if ! stellar keys address "$ID" > /dev/null 2>&1; then
   echo "Creating + funding new testnet identity: $ID"
@@ -24,6 +28,9 @@ if ! stellar keys address "$ID" > /dev/null 2>&1; then
 fi
 DEPLOYER=$(stellar keys address "$ID")
 echo "Deployer: $DEPLOYER"
+# First Light burns half its fee. Default sink: the deployer itself — flip
+# this to a dedicated burn account or governance multisig once one exists.
+BURN_ADDRESS="${BURN_ADDRESS:-$DEPLOYER}"
 
 echo "--- build wasm ---"
 (cd contracts && stellar contract build)
@@ -34,11 +41,13 @@ PLANET=$(stellar contract deploy \
   --source "$ID" \
   --network testnet \
   -- \
-  --admin   "$DEPLOYER" \
-  --drand   "$DRAND" \
-  --uri     "ipfs://cosmocopia/" \
-  --name    "Cosmocopia" \
-  --symbol  "PLN" 2>&1 | tail -1)
+  --admin         "$DEPLOYER" \
+  --drand         "$DRAND" \
+  --uri           "ipfs://cosmocopia/" \
+  --name          "Cosmocopia" \
+  --symbol        "PLN" \
+  --native_token  "$NATIVE_TOKEN" \
+  --burn_address  "$BURN_ADDRESS" 2>&1 | tail -1)
 echo "Planet contract: $PLANET"
 
 # -----------------------------------------------------------------------------

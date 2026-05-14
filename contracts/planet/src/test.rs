@@ -50,6 +50,13 @@ struct Fixture {
     env: Env,
     drand_id: Address,
     planet: PlanetContractClient<'static>,
+    /// Native XLM SAC under test (host-registered Stellar Asset Contract).
+    native_sac: Address,
+    /// Burn / sink address configured at construction.
+    burn: Address,
+    /// Admin address used in `setup` so tests that exercise admin paths can
+    /// re-mint XLM to top up keeper balances etc.
+    sac_admin: Address,
 }
 
 fn setup(seed_byte: u8) -> Fixture {
@@ -63,6 +70,14 @@ fn setup(seed_byte: u8) -> Fixture {
     let seed = BytesN::from_array(&env, &[seed_byte; 32]);
     drand_client.set_latest(&1u64, &seed);
 
+    // Register a native-XLM SAC under a controllable admin so tests can mint
+    // tokens to keeper addresses. `register_stellar_asset_contract_v2`
+    // returns both the SAC address and an issuer-admin handle.
+    let sac_admin = Address::generate(&env);
+    let sac = env.register_stellar_asset_contract_v2(sac_admin.clone());
+    let native_sac = sac.address();
+    let burn = Address::generate(&env);
+
     let planet_id = env.register(
         PlanetContract,
         (
@@ -71,6 +86,8 @@ fn setup(seed_byte: u8) -> Fixture {
             String::from_str(&env, "ipfs://meta/"),
             String::from_str(&env, "Cosmocopia"),
             String::from_str(&env, "PLN"),
+            native_sac.clone(),
+            burn.clone(),
         ),
     );
     let planet = PlanetContractClient::new(&env, &planet_id);
@@ -79,7 +96,25 @@ fn setup(seed_byte: u8) -> Fixture {
         env,
         drand_id,
         planet,
+        native_sac,
+        burn,
+        sac_admin,
     }
+}
+
+/// Mint `amount` stroops of the test native XLM SAC to `to`. The SAC's admin
+/// (`sac_admin` from `setup`) is the only address that can call `mint`.
+fn mint_xlm(f: &Fixture, to: &Address, amount: i128) {
+    let admin_client = soroban_sdk::token::StellarAssetClient::new(&f.env, &f.native_sac);
+    // `mock_all_auths` is active in `setup`; admin auth is mocked too.
+    admin_client.mint(to, &amount);
+    // Sanity: dont let an unused warning fire if we ever stop using sac_admin.
+    let _ = &f.sac_admin;
+}
+
+/// Balance helper.
+fn xlm_balance(f: &Fixture, who: &Address) -> i128 {
+    soroban_sdk::token::TokenClient::new(&f.env, &f.native_sac).balance(who)
 }
 
 fn set_drand(env: &Env, drand_id: &Address, round: u64, byte: u8) {
@@ -329,6 +364,11 @@ fn raw_setup() -> Fixture {
     let drand_client = MockDrandClient::new(&env, &drand_id);
     drand_client.set_latest(&1u64, &BytesN::from_array(&env, &[0x99u8; 32]));
 
+    let sac_admin = Address::generate(&env);
+    let sac = env.register_stellar_asset_contract_v2(sac_admin.clone());
+    let native_sac = sac.address();
+    let burn = Address::generate(&env);
+
     let planet_id = env.register(
         PlanetContract,
         (
@@ -337,6 +377,8 @@ fn raw_setup() -> Fixture {
             String::from_str(&env, "ipfs://meta/"),
             String::from_str(&env, "Cosmocopia"),
             String::from_str(&env, "PLN"),
+            native_sac.clone(),
+            burn.clone(),
         ),
     );
     let planet = PlanetContractClient::new(&env, &planet_id);
@@ -346,6 +388,9 @@ fn raw_setup() -> Fixture {
         env,
         drand_id,
         planet,
+        native_sac,
+        burn,
+        sac_admin,
     }
 }
 
@@ -1190,4 +1235,556 @@ fn legacy_parent_contributes_visible_population_not_zero() {
             parent_a_visible_pop
         );
     }
+}
+
+// ============================================================================
+//  First Light + soulbound (Phase 1 onboarding)
+// ============================================================================
+
+/// Helper: end-to-end claim+reveal for First Light. Mints enough XLM to the
+/// keeper, calls `claim_first_light`, advances the ledger past the reveal
+/// delay, calls `reveal_first_light`, returns the new token id.
+fn claim_first_light(f: &Fixture, keeper: &Address) -> u32 {
+    mint_xlm(f, keeper, crate::FIRST_LIGHT_FEE_STROOPS);
+    let commitment_id = f.planet.claim_first_light(keeper, &100u64);
+    let now = f.env.ledger().sequence();
+    f.env
+        .ledger()
+        .set_sequence_number(now + crate::MIN_REVEAL_DELAY_LEDGERS);
+    f.planet.reveal_first_light(&commitment_id)
+}
+
+#[test]
+fn claim_first_light_charges_10_xlm() {
+    let f = setup(0xA1);
+    let keeper = Address::generate(&f.env);
+    mint_xlm(&f, &keeper, crate::FIRST_LIGHT_FEE_STROOPS);
+    assert_eq!(xlm_balance(&f, &keeper), crate::FIRST_LIGHT_FEE_STROOPS);
+
+    let _cid = f.planet.claim_first_light(&keeper, &100u64);
+    // 5 XLM to burn, 5 XLM to the contract's pool. Keeper balance = 0.
+    assert_eq!(xlm_balance(&f, &keeper), 0);
+    assert_eq!(xlm_balance(&f, &f.burn), crate::FIRST_LIGHT_BURN_STROOPS);
+    assert_eq!(
+        xlm_balance(&f, &f.planet.address),
+        crate::FIRST_LIGHT_POOL_STROOPS
+    );
+    assert_eq!(
+        f.planet.distribution_pool(),
+        crate::FIRST_LIGHT_POOL_STROOPS
+    );
+}
+
+#[test]
+fn claim_first_light_one_shot_per_address() {
+    let f = setup(0xA2);
+    let keeper = Address::generate(&f.env);
+    let _ = claim_first_light(&f, &keeper);
+    // Second claim attempt by the same keeper: even pre-fee gate fires.
+    // We still mint XLM so the auth gate doesn't fire ambiguously.
+    mint_xlm(&f, &keeper, crate::FIRST_LIGHT_FEE_STROOPS);
+    let err = f
+        .planet
+        .try_claim_first_light(&keeper, &200u64)
+        .err()
+        .unwrap()
+        .unwrap();
+    assert_eq!(err, Error::FirstLightAlreadyClaimed);
+}
+
+#[test]
+fn first_light_coord_in_outer_dark() {
+    let f = setup(0xA3);
+    let keeper = Address::generate(&f.env);
+    let id = claim_first_light(&f, &keeper);
+    let (x, y) = f.planet.coords_of(&id);
+    assert_eq!(
+        galaxy::sector_of(x, y),
+        galaxy::SECTOR_OUTER_DARK,
+        "First Light coord ({}, {}) must land in Outer Dark",
+        x,
+        y
+    );
+}
+
+#[test]
+fn first_light_coord_unique() {
+    let f = setup(0xA4);
+    let k1 = Address::generate(&f.env);
+    let k2 = Address::generate(&f.env);
+    let id1 = claim_first_light(&f, &k1);
+    let id2 = claim_first_light(&f, &k2);
+    let xy1 = f.planet.coords_of(&id1);
+    let xy2 = f.planet.coords_of(&id2);
+    assert_ne!(
+        xy1, xy2,
+        "two different keepers must end up at distinct coords"
+    );
+}
+
+#[test]
+fn first_light_dna_stays_common_across_seed_sweep() {
+    // Audit C-1 / H-1: the previous test (`first_light_tier_capped_at_common`)
+    // only checked rarity-nibble + class. That left every other rarity-scoring
+    // byte (atmosphere/feature/aura/moons/rings) un-asserted, so the test
+    // passed while the Common-tier floor was actually broken.
+    //
+    // This sweep calls `clamp_first_light_dna` directly with `[s; 32]` for
+    // every byte value s in 0..=0xFF (the full mock-drand seed space the
+    // fixture configures) and asserts that every byte the scorer reads has
+    // been clamped into a range that cannot reach the Rare cutoff. The
+    // belt-and-suspenders frontend test in web/lib/firstLightFloor.test.ts
+    // additionally runs computeRarity on these post-clamp DNAs and asserts
+    // tier === 'Common'.
+    let env = Env::default();
+    for s in 0u8..=0xFF {
+        let dna = BytesN::from_array(&env, &[s; 32]);
+        let clamped = crate::clamp_first_light_dna(&env, &dna).to_array();
+
+        // Rarity nibble: byte 17 low 4 bits must be <= FIRST_LIGHT_RARITY_CAP
+        // (4 today, capping the floor(nibble/5) contribution at 0).
+        let rarity = clamped[dna::IDX_AFFINITY_RARITY] & 0x0F;
+        assert!(
+            rarity <= crate::FIRST_LIGHT_RARITY_CAP,
+            "rarity nibble {} exceeded Common cap {} for seed {:#x}",
+            rarity,
+            crate::FIRST_LIGHT_RARITY_CAP,
+            s,
+        );
+
+        // Class: byte 0 high nibble must not be in MYTHIC_CLASS_IDS (14/15).
+        let class_idx = (clamped[dna::IDX_CLASS] >> 4) & 0x0F;
+        for m in crate::FIRST_LIGHT_MYTHIC_CLASS_IDS.iter() {
+            assert_ne!(
+                class_idx, *m,
+                "class {} hit a mythic id for seed {:#x}",
+                class_idx, s,
+            );
+        }
+
+        // Atmosphere idx: byte 2 high 3 bits must not be in {4, 6, 7}.
+        let atm_idx = (clamped[dna::IDX_ATMOSPHERE] >> 5) & 0x07;
+        for m in crate::FIRST_LIGHT_MYTHIC_ATM_IDS.iter() {
+            assert_ne!(
+                atm_idx, *m,
+                "atmosphere idx {} hit mythic for seed {:#x}",
+                atm_idx, s,
+            );
+        }
+        // Atmosphere density: byte 2 low 5 bits must be <= 27 (cuts the +2).
+        let atm_density = clamped[dna::IDX_ATMOSPHERE] & 0x1F;
+        assert!(
+            atm_density <= crate::FIRST_LIGHT_ATM_DENSITY_CAP,
+            "atmosphere density {} >= 28 for seed {:#x}",
+            atm_density,
+            s,
+        );
+
+        // Feature idx: byte 3 high nibble must not be in {8, 9, 10}.
+        let feat_idx = (clamped[dna::IDX_FEATURE] >> 4) & 0x0F;
+        for m in crate::FIRST_LIGHT_MYTHIC_FEAT_IDS.iter() {
+            assert_ne!(
+                feat_idx, *m,
+                "feature idx {} hit mythic for seed {:#x}",
+                feat_idx, s,
+            );
+        }
+        // Feature intensity: byte 3 low nibble must be <= 13.
+        let feat_intensity = clamped[dna::IDX_FEATURE] & 0x0F;
+        assert!(
+            feat_intensity <= crate::FIRST_LIGHT_FEAT_INTENSITY_CAP,
+            "feature intensity {} >= 14 for seed {:#x}",
+            feat_intensity,
+            s,
+        );
+
+        // Aura idx: byte 5 high 3 bits must not be in {5, 7}.
+        let aura_idx = (clamped[dna::IDX_AURA] >> 5) & 0x07;
+        for m in crate::FIRST_LIGHT_MYTHIC_AURA_IDS.iter() {
+            assert_ne!(
+                aura_idx, *m,
+                "aura idx {} hit mythic for seed {:#x}",
+                aura_idx, s,
+            );
+        }
+        // Aura intensity: byte 5 low 5 bits must be <= 27.
+        let aura_intensity = clamped[dna::IDX_AURA] & 0x1F;
+        assert!(
+            aura_intensity <= crate::FIRST_LIGHT_AURA_INTENSITY_CAP,
+            "aura intensity {} >= 28 for seed {:#x}",
+            aura_intensity,
+            s,
+        );
+
+        // Moons: byte 4 high 3 bits must be <= 1 (zeros the contribution).
+        let moons = (clamped[dna::IDX_MOON] >> 5) & 0x07;
+        assert!(
+            moons <= crate::FIRST_LIGHT_MOON_COUNT_CAP,
+            "moon count {} > {} for seed {:#x}",
+            moons,
+            crate::FIRST_LIGHT_MOON_COUNT_CAP,
+            s,
+        );
+
+        // Rings: byte 1 low 3 bits must be <= 2 (zeros the contribution).
+        let rings = clamped[dna::IDX_SURFACE] & 0x07;
+        assert!(
+            rings <= crate::FIRST_LIGHT_RING_COUNT_CAP,
+            "ring count {} > {} for seed {:#x}",
+            rings,
+            crate::FIRST_LIGHT_RING_COUNT_CAP,
+            s,
+        );
+    }
+}
+
+#[test]
+fn first_light_reveal_yields_clamped_dna() {
+    // End-to-end check that `reveal_first_light` actually invokes
+    // `clamp_first_light_dna` and the clamped bytes land in storage. We test
+    // a handful of seeds (one per "tier boundary" of the bit-pattern space)
+    // — the broader byte-level invariants are proved by the sweep test above
+    // against the raw clamp; this just pins that the integration wire-up is
+    // correct.
+    for seed in [0x11u8, 0x55, 0xBB, 0xFF] {
+        let f = setup(seed);
+        let keeper = Address::generate(&f.env);
+        let id = claim_first_light(&f, &keeper);
+        let dna = f.planet.dna_of(&id).to_array();
+
+        let rarity = dna[dna::IDX_AFFINITY_RARITY] & 0x0F;
+        assert!(
+            rarity <= crate::FIRST_LIGHT_RARITY_CAP,
+            "rarity nibble {} exceeded cap for seed {:#x}",
+            rarity,
+            seed,
+        );
+        let class_idx = (dna[dna::IDX_CLASS] >> 4) & 0x0F;
+        for m in crate::FIRST_LIGHT_MYTHIC_CLASS_IDS.iter() {
+            assert_ne!(
+                class_idx, *m,
+                "mythic class slipped through for {:#x}",
+                seed
+            );
+        }
+        let atm_idx = (dna[dna::IDX_ATMOSPHERE] >> 5) & 0x07;
+        for m in crate::FIRST_LIGHT_MYTHIC_ATM_IDS.iter() {
+            assert_ne!(atm_idx, *m, "mythic atm slipped through for {:#x}", seed);
+        }
+        let feat_idx = (dna[dna::IDX_FEATURE] >> 4) & 0x0F;
+        for m in crate::FIRST_LIGHT_MYTHIC_FEAT_IDS.iter() {
+            assert_ne!(
+                feat_idx, *m,
+                "mythic feature slipped through for {:#x}",
+                seed
+            );
+        }
+        let aura_idx = (dna[dna::IDX_AURA] >> 5) & 0x07;
+        for m in crate::FIRST_LIGHT_MYTHIC_AURA_IDS.iter() {
+            assert_ne!(aura_idx, *m, "mythic aura slipped through for {:#x}", seed);
+        }
+    }
+}
+
+#[test]
+fn soulbound_blocks_transfer() {
+    let f = setup(0xB1);
+    let keeper = Address::generate(&f.env);
+    let id = claim_first_light(&f, &keeper);
+    assert!(f.planet.is_soulbound_of(&id));
+
+    let recipient = Address::generate(&f.env);
+    let result = f.planet.try_transfer(&keeper, &recipient, &id);
+    assert!(result.is_err(), "transfer of a soulbound token must error");
+}
+
+#[test]
+fn soulbound_blocks_conjoin() {
+    let f = setup(0xB2);
+    let keeper = Address::generate(&f.env);
+    // First Light planet (soulbound) + a regular genesis planet owned by
+    // the same keeper. Conjoin should reject because parent A is locked.
+    let soulbound = claim_first_light(&f, &keeper);
+    set_drand(&f.env, &f.drand_id, 200, 0x22);
+    let regular = mint_genesis(&f, &keeper, 5, 5);
+
+    let err = f
+        .planet
+        .try_commit_conjoin(&soulbound, &regular, &keeper, &300u64)
+        .err()
+        .unwrap()
+        .unwrap();
+    assert_eq!(err, Error::SoulboundLocked);
+}
+
+#[test]
+fn soulbound_releases_after_7d_consistent_care() {
+    // "Consistent care" semantics: the keeper has kept the planet in band
+    // every time `care` ran. We simulate that by writing fresh mid-band
+    // vitals into storage with `last_ledger = now`, then advancing the
+    // ledger by SOULBOUND_RELEASE_LEDGERS so the elapsed window crosses
+    // the release threshold. The next care call sees in-band vitals and
+    // a HealthySince older than the window → clears the flag.
+    let f = setup(0xB3);
+    let keeper = Address::generate(&f.env);
+    let id = claim_first_light(&f, &keeper);
+
+    let initial_since = f.planet.healthy_since_of(&id);
+    assert!(initial_since > 0);
+
+    // Fast-forward past the release window, then refresh vitals to the
+    // initial mid-band shape with the new `last_ledger`. This is what an
+    // actively-cared-for planet looks like just before its threshold tick.
+    let now = f.env.ledger().sequence();
+    let later = now + crate::SOULBOUND_RELEASE_LEDGERS + 1;
+    f.env.ledger().set_sequence_number(later);
+    f.env.as_contract(&f.planet.address, || {
+        f.env.storage().persistent().set(
+            &crate::DataKey::Vitals(id),
+            &crate::stats::Vitals {
+                temperature: 128,
+                hydration: 128,
+                gravity: 128,
+                biomass: 128,
+                spirit: 160,
+                last_ledger: later,
+            },
+        );
+    });
+
+    // `Reflect` only nudges spirit (+15 on most branches), so post-call
+    // vitals stay comfortably in the [40, 220] band.
+    f.planet.care(&id, &(stats::Care::Reflect as u32));
+
+    assert!(
+        !f.planet.is_soulbound_of(&id),
+        "after 7d of healthy care the soulbound flag should clear"
+    );
+}
+
+#[test]
+fn soulbound_resets_on_unhealthy() {
+    // If vitals drop out of band the HealthySince timer resets to 0 — the
+    // next healthy care call starts a fresh streak from `now`, NOT from the
+    // initial value.
+    let f = setup(0xB4);
+    let keeper = Address::generate(&f.env);
+    let id = claim_first_light(&f, &keeper);
+    let initial_since = f.planet.healthy_since_of(&id);
+    assert!(initial_since > 0, "HealthySince must be set at reveal");
+
+    // Tank the planet's vitals by setting them all to 5 directly. Avoid
+    // going through `care` because we want a non-care path to verify
+    // care still resets the streak on the way back up.
+    f.env.as_contract(&f.planet.address, || {
+        f.env.storage().persistent().set(
+            &crate::DataKey::Vitals(id),
+            &crate::stats::Vitals {
+                temperature: 5,
+                hydration: 5,
+                gravity: 5,
+                biomass: 5,
+                spirit: 5,
+                last_ledger: f.env.ledger().sequence(),
+            },
+        );
+    });
+
+    // Trigger a care call — `Reflect` only nudges spirit (+15 on the default
+    // branch), so post-call all five vitals are still well out of band.
+    f.planet.care(&id, &(stats::Care::Reflect as u32));
+    assert_eq!(
+        f.planet.healthy_since_of(&id),
+        0,
+        "unhealthy care must reset HealthySince to 0"
+    );
+}
+
+#[test]
+fn burn_5_xlm_distribution_5_xlm() {
+    let f = setup(0xC1);
+    let keeper = Address::generate(&f.env);
+    mint_xlm(&f, &keeper, crate::FIRST_LIGHT_FEE_STROOPS);
+    let _cid = f.planet.claim_first_light(&keeper, &100u64);
+
+    // Exact-split assertions: 5 XLM (= FIRST_LIGHT_BURN_STROOPS) to burn,
+    // 5 XLM (= FIRST_LIGHT_POOL_STROOPS) to the contract's distribution
+    // pool. Tracks the pool both via the explicit storage view and via
+    // the contract's actual on-chain XLM balance.
+    assert_eq!(xlm_balance(&f, &f.burn), crate::FIRST_LIGHT_BURN_STROOPS);
+    assert_eq!(
+        xlm_balance(&f, &f.planet.address),
+        crate::FIRST_LIGHT_POOL_STROOPS
+    );
+    assert_eq!(
+        f.planet.distribution_pool(),
+        crate::FIRST_LIGHT_POOL_STROOPS
+    );
+}
+
+#[test]
+fn first_light_views_round_trip() {
+    let f = setup(0xC2);
+    let keeper = Address::generate(&f.env);
+    // Pre-claim: views return default-y / empty values.
+    assert!(!f.planet.first_light_claimed(&keeper));
+    assert_eq!(f.planet.distribution_pool(), 0);
+    assert_eq!(f.planet.burn_address(), f.burn);
+    assert_eq!(f.planet.native_token(), f.native_sac);
+
+    let id = claim_first_light(&f, &keeper);
+    assert!(f.planet.first_light_claimed(&keeper));
+    assert!(f.planet.is_soulbound_of(&id));
+    assert!(f.planet.healthy_since_of(&id) > 0);
+}
+
+#[test]
+fn set_burn_address_rotates() {
+    let f = setup(0xC3);
+    let new_burn = Address::generate(&f.env);
+    f.planet.set_burn_address(&new_burn);
+    assert_eq!(f.planet.burn_address(), new_burn);
+}
+
+#[test]
+fn set_native_token_rotates() {
+    let f = setup(0xC4);
+    let alt = f
+        .env
+        .register_stellar_asset_contract_v2(f.sac_admin.clone());
+    f.planet.set_native_token(&alt.address());
+    assert_eq!(f.planet.native_token(), alt.address());
+}
+
+#[test]
+fn first_light_two_commits_one_reveal_wins(/* audit H-3 */) {
+    // The dev's accepted "no second-commit gate" lets the same keeper open
+    // multiple commitments back-to-back (they pay the 10 XLM each time,
+    // self-imposed fee). The post-reveal gate at lib.rs:510-516 must reject
+    // the second reveal once the first has set FirstLightClaimed. This test
+    // proves both halves of that contract:
+    //   (1) two separate claim_first_light calls succeed and produce
+    //       distinct commitment ids,
+    //   (2) the first reveal mints a planet and sets the flag,
+    //   (3) the second reveal errors with FirstLightAlreadyClaimed,
+    //   (4) the second commitment is consumed (no orphan storage).
+    let f = setup(0xD1);
+    let keeper = Address::generate(&f.env);
+    // Fund the keeper for two full claim fees.
+    mint_xlm(&f, &keeper, crate::FIRST_LIGHT_FEE_STROOPS * 2);
+
+    let cid_a = f.planet.claim_first_light(&keeper, &100u64);
+    let cid_b = f.planet.claim_first_light(&keeper, &101u64);
+    assert_ne!(cid_a, cid_b, "second commit must get its own id");
+
+    // Advance past the reveal delay for both.
+    let now = f.env.ledger().sequence();
+    f.env
+        .ledger()
+        .set_sequence_number(now + crate::MIN_REVEAL_DELAY_LEDGERS);
+
+    // First reveal mints the planet.
+    let token_id = f.planet.reveal_first_light(&cid_a);
+    assert!(f.planet.is_soulbound_of(&token_id));
+    assert!(f.planet.first_light_claimed(&keeper));
+
+    // Second reveal errors with FirstLightAlreadyClaimed.
+    let err = f
+        .planet
+        .try_reveal_first_light(&cid_b)
+        .err()
+        .unwrap()
+        .unwrap();
+    assert_eq!(err, Error::FirstLightAlreadyClaimed);
+
+    // Storage state after the rejected second reveal:
+    //   * First commitment slot is GONE (consumed by the successful reveal).
+    //   * Second commitment slot PERSISTS — Soroban rolled back the
+    //     `take_commitment` write when the defensive `?` propagated an Err.
+    //     This is the same rollback behavior the dev relies on for the
+    //     standard `CommitmentNotReady` path. The slot is dead-but-present;
+    //     a retry of `reveal_first_light(cid_b)` will hit the same gate
+    //     and remain Err'd forever, so the keeper just paid a self-imposed
+    //     10 XLM fee (the I-1 informational behavior). Asserting this
+    //     pins the "no surprise storage loss" guarantee.
+    f.env.as_contract(&f.planet.address, || {
+        assert!(
+            !f.env
+                .storage()
+                .persistent()
+                .has(&crate::DataKey::Commitment(cid_a)),
+            "first commitment must be consumed by the successful reveal"
+        );
+        assert!(
+            f.env
+                .storage()
+                .persistent()
+                .has(&crate::DataKey::Commitment(cid_b)),
+            "second commitment must persist (rolled back on Err) — dead but not lost"
+        );
+    });
+}
+
+#[test]
+fn soulbound_blocks_approve(/* audit H-4 */) {
+    // Defense in depth: even though `transfer_from` rejects soulbound moves,
+    // `approve` itself should also reject. Without this an off-chain listener
+    // would see an `approve` event on a soulbound token and infer
+    // transferability, only to later observe the actual transfer revert.
+    let f = setup(0xD2);
+    let keeper = Address::generate(&f.env);
+    let id = claim_first_light(&f, &keeper);
+    let operator = Address::generate(&f.env);
+    // live_until_ledger must be in the future; use a generous window.
+    let live_until = f.env.ledger().sequence() + 1000;
+    // `approve` panics rather than returning Result, so `try_approve` surfaces
+    // a host-level `soroban_sdk::Error`. We compare via `.into()` since the
+    // host error carries the same numeric code as our `Error::SoulboundLocked`.
+    let err = f
+        .planet
+        .try_approve(&keeper, &operator, &id, &live_until)
+        .err()
+        .unwrap()
+        .unwrap();
+    assert_eq!(err, Error::SoulboundLocked.into());
+}
+
+#[test]
+fn approve_works_for_non_soulbound(/* audit H-4 regression guard */) {
+    // The approve override must NOT break the normal path. A regular genesis
+    // planet (not soulbound) should still be approveable.
+    let f = setup(0xD3);
+    let owner = Address::generate(&f.env);
+    let id = mint_genesis(&f, &owner, 5, 5);
+    let operator = Address::generate(&f.env);
+    let live_until = f.env.ledger().sequence() + 1000;
+    // Should not panic and should round-trip through get_approved.
+    f.planet.approve(&owner, &operator, &id, &live_until);
+    assert_eq!(f.planet.get_approved(&id), Some(operator));
+}
+
+#[test]
+fn first_light_uninitialized_native_token_errors_cleanly(/* audit M-2 */) {
+    // If somehow `NativeToken` storage isn't populated (e.g., a contract was
+    // upgraded from a constructor-less version, or a future change forgets
+    // to wire it in __constructor), claim_first_light must surface the
+    // typed Uninitialized error instead of the misleading NotAdmin overload
+    // that the dev shipped first. We simulate the missing slot by clearing
+    // it in-contract via `as_contract`.
+    let f = setup(0xD4);
+    let keeper = Address::generate(&f.env);
+    mint_xlm(&f, &keeper, crate::FIRST_LIGHT_FEE_STROOPS);
+    f.env.as_contract(&f.planet.address, || {
+        f.env
+            .storage()
+            .instance()
+            .remove(&crate::DataKey::NativeToken);
+    });
+    let err = f
+        .planet
+        .try_claim_first_light(&keeper, &100u64)
+        .err()
+        .unwrap()
+        .unwrap();
+    assert_eq!(err, Error::Uninitialized);
 }

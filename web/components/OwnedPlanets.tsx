@@ -5,6 +5,7 @@ import Link from 'next/link';
 import PlanetSprite from './PlanetSprite';
 import PlanetView from './PlanetView';
 import RarityBadge from './RarityBadge';
+import SoulboundChip from './SoulboundChip';
 import { listOwnedPlanets, submitCare, submitConjoin, CARE, type CareName, type Planet } from '../lib/cosmocopia';
 import { useWallet } from '../lib/wallet-context';
 
@@ -207,8 +208,17 @@ function PlanetCard({
       <div style={{ padding: 'var(--space-3)' }}>
         <div style={{ display: 'flex', justifyContent: 'center', position: 'relative' }}>
           <PlanetSprite dna={planet.dna} scale={3} coords={planet.coords} />
-          <span className="rarityRow">
+          <span className="rarityRow" style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
             <RarityBadge dna={planet.dna} coords={planet.coords} size="sm" />
+            {planet.soulbound && (
+              <SoulboundChip
+                healthySince={planet.healthySince ?? 0}
+                // No `currentLedger` here — without polling the latest
+                // ledger every card render the hover detail falls back to
+                // the timer-paused / static copy, which is accurate for
+                // a snapshot view. PlanetView pulls the live value.
+              />
+            )}
           </span>
           {picked && <span className="pickBadge">picked</span>}
         </div>
