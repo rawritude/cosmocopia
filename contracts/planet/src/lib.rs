@@ -276,22 +276,25 @@ pub const FIRST_LIGHT_POOL_STROOPS: i128 = 5 * 10_000_000;
 /// ~5 s/ledger → 7 * 86_400 / 5 = 120_960 ledgers.
 pub const SOULBOUND_RELEASE_LEDGERS: u32 = 120_960;
 
-/// Outer Dark sector threshold from `galaxy::sector_of`. The threshold is
-/// `r² >= 2500` (r >= 50). We pin a coord radius of 100: the keeper hash
-/// spreads samples uniformly across `[-100, 100]² = 40_401` lattice points,
-/// of which ≈ 24_000 (≈ 60%) fall in Outer Dark. Radius 60 (the prior value)
-/// gave only ≈ 6_800 valid points; the audit's H-2 recommended bumping for
-/// headroom.
-pub const FIRST_LIGHT_RING_RADIUS: i32 = 100;
-pub const FIRST_LIGHT_RING_R2: u64 =
-    (FIRST_LIGHT_RING_RADIUS as u64) * (FIRST_LIGHT_RING_RADIUS as u64);
+/// Sampling span for First Light coord derivation. The keeper hash is mapped
+/// into `x, y ∈ [-100, 100]`, a 201² = 40_401-point square lattice. This
+/// controls *where* we sample, not *whether* a sample is accepted — the
+/// Outer-Dark threshold below is independent.
+pub const FIRST_LIGHT_SAMPLE_SPAN: i32 = 100;
 
-/// Coord-collision retry budget. With ≈ 24_000 distinct Outer-Dark lattice
-/// points (see `FIRST_LIGHT_RING_RADIUS`) and a uniform-ish hash-derived
-/// sample, the per-iteration success rate is roughly 60% (inside-ring) ×
-/// (1 − P(coord taken)). For honest single-claim usage P(taken) ≈ 0, so
-/// the expected first-success salt is ~2. 16 keeps a wide safety margin
-/// for adversarial pre-claim grief over a known target keeper.
+/// Outer Dark threshold matching `galaxy::sector_of`: `r² >= 2500` (`r >= 50`).
+/// Of the 40_401 sample points, ≈ 32_500 satisfy this (~80%). An earlier
+/// version of this code conflated the sampling span with the threshold and
+/// gated on `r² >= 10_000` (re-audit finding N-1) — that pushed the per-
+/// iteration success rate down to ~22% and made ~1 in 55 claimers exhaust
+/// their salt budget. Restored to match the actual sector definition.
+pub const FIRST_LIGHT_OUTER_DARK_R2: u64 = 2500;
+
+/// Coord-collision retry budget. Per-iteration success rate is ~80% (sample
+/// lands in Outer Dark) × (1 − P(coord taken)). For honest single-claim
+/// usage P(taken) ≈ 0, so the expected first-success salt is ~1. 16 leaves
+/// a wide safety margin for adversarial pre-claim grief over a known target
+/// keeper — P(all 16 fail | no taken) < 1e-11.
 pub const FIRST_LIGHT_RETRY_BUDGET: u32 = 16;
 
 /// Maximum value of the DNA rarity nibble (low 4 bits of byte 17) that
@@ -1366,8 +1369,11 @@ fn update_healthy_since(e: &Env, id: u32, v: &Vitals, now: u32) {
 ///   `+2` (an exotic-but-non-mythic class index 8..=13, allowed through)
 ///   `+1` (a rare feature: eyes / volcanoes / archipelago)
 ///   `+1` (a rare aura: pulse / static)
+///   `+1` (rim coordinate bonus when r² ≥ 10_000 — fires for the subset
+///         of FL coords beyond radius 100; FL coords with r in [50, 100)
+///         skip this row)
 ///   ----
-///   `=7`, well below the Rare cutoff of 12.
+///   `=8`, well below the Rare cutoff of 12.
 ///
 /// Clamps (each one is a typed contribution removal):
 ///   1. Rarity nibble (byte 17 low) ≤ `FIRST_LIGHT_RARITY_CAP` so the
@@ -1376,7 +1382,7 @@ fn update_healthy_since(e: &Env, id: u32, v: &Vitals, now: u32) {
 ///      both outside `EXOTIC_CLASS_IDS = {8..=13}`, so no exotic bonus
 ///      either). Non-mythic indices are left as-is.
 ///   3. Atmosphere idx (byte 2 high 3 bits): mythic ids {4, 6, 7} deflect
-///      via `& 0b011` to {0, 0, 3} (none / none / storm) — none of which
+///      via `& 0b011` to {0, 2, 3} (none / thick / storm) — none of which
 ///      land in the +4 mythic set.
 ///   4. Atmosphere density (byte 2 low 5 bits) capped at 27 so the
 ///      `density ≥ 28 → +2` branch never fires.
@@ -1462,20 +1468,20 @@ pub(crate) fn clamp_first_light_dna(e: &Env, dna: &BytesN<32>) -> BytesN<32> {
 /// Mapping:
 ///   - hash(salt || strkey(keeper)) → 32 bytes via the host's `crypto.sha256`
 ///   - byte slices [0..4] and [4..8] interpreted as i32 LE coords
-///   - both modded into `±FIRST_LIGHT_RING_RADIUS`
+///   - both modded into `±FIRST_LIGHT_SAMPLE_SPAN`
 ///   - if `r²` lands inside Outer Dark and the point isn't already taken,
 ///     return it; else bump the salt and retry up to FIRST_LIGHT_RETRY_BUDGET.
 ///
 /// Audit H-2 history: an earlier version had a "push outward to ±span" fall-
 /// back when the hash landed inside the ring. With only 4 corner points,
 /// the fallback degraded to corner-spam after 4 keepers claimed those corners.
-/// We dropped the fallback and rely on salt rotation: with radius 100 the
-/// per-iteration success rate is ≈ 60% and 16 retries gives P(all fail) <
-/// 1e-6 even against adversarial pre-claiming.
+/// We dropped the fallback and rely on salt rotation: with sampling span 100
+/// and Outer-Dark gate r² ≥ 2500, per-iteration success rate is ≈ 80% and
+/// 16 retries gives P(all fail) < 1e-11 even against adversarial pre-claiming.
 fn derive_first_light_coord(e: &Env, keeper: &Address) -> Result<(i32, i32), Error> {
     use soroban_sdk::Bytes;
     let keeper_bytes = keeper.to_string().to_bytes();
-    let span = FIRST_LIGHT_RING_RADIUS;
+    let span = FIRST_LIGHT_SAMPLE_SPAN;
     let modspan = (span as i64) * 2 + 1; // -span..=+span inclusive
     for salt in 0..FIRST_LIGHT_RETRY_BUDGET {
         let mut payload = Bytes::new(e);
@@ -1485,7 +1491,7 @@ fn derive_first_light_coord(e: &Env, keeper: &Address) -> Result<(i32, i32), Err
         // i32 from first 4 bytes (LE) so a tiny salt swap moves the point.
         let raw_x = i32::from_le_bytes([h[0], h[1], h[2], h[3]]);
         let raw_y = i32::from_le_bytes([h[4], h[5], h[6], h[7]]);
-        // Mod into ±FIRST_LIGHT_RING_RADIUS. rem_euclid keeps the sign sane.
+        // Mod into ±FIRST_LIGHT_SAMPLE_SPAN. rem_euclid keeps the sign sane.
         let x = (raw_x as i64).rem_euclid(modspan) as i32 - span;
         let y = (raw_y as i64).rem_euclid(modspan) as i32 - span;
 
@@ -1494,7 +1500,7 @@ fn derive_first_light_coord(e: &Env, keeper: &Address) -> Result<(i32, i32), Err
         // see the audit-H-2 comment above for why.
         let r2 = (x as i64).unsigned_abs() * (x as i64).unsigned_abs()
             + (y as i64).unsigned_abs() * (y as i64).unsigned_abs();
-        if r2 >= FIRST_LIGHT_RING_R2
+        if r2 >= FIRST_LIGHT_OUTER_DARK_R2
             && !e
                 .storage()
                 .persistent()

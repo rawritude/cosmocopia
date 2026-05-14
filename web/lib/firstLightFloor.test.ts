@@ -89,30 +89,40 @@ function clampFirstLightDna(seed: number): Uint8Array {
 }
 
 describe('First Light Common-tier floor (belt-and-suspenders)', () => {
-  // First Light coords always land in Outer Dark (50 <= r <= ~85 in the
-  // ±60 clamp). The scorer's "rim coordinate" bonus needs r² >= 10000 = r >=
-  // 100, so First Light coords *never* trigger the +1 rim bonus. We still
-  // pass a representative Outer-Dark coord to mirror the production read path.
-  const flCoords = { x: 42, y: 42 };
+  // First Light coords always land in Outer Dark (r >= 50 per the contract
+  // gate `r² >= FIRST_LIGHT_OUTER_DARK_R2 = 2500`). The sampling span is
+  // ±100, so coords can land anywhere in [-100, 100]². The scorer awards a
+  // +1 rim bonus when r² >= 10000 (r >= 100). FL coords on the far edge of
+  // the sampling square hit that threshold; mid-Outer-Dark coords don't.
+  // We test BOTH to cover the production distribution.
+  const midOuterDark = { x: 42, y: 42 };   // r ≈ 59, no rim bonus
+  const rimOuterDark = { x: 96, y: 32 };   // r ≈ 101, rim bonus fires (+1)
 
-  it('every seed byte yields a Common-tier planet', () => {
-    for (let s = 0; s <= 0xff; s++) {
-      const clamped = clampFirstLightDna(s);
-      const rarity = computeRarity({ dna: clamped, coords: flCoords });
-      expect(rarity.tier, `seed ${s.toString(16)} produced ${rarity.tier} (score ${rarity.score})`).toBe('Common');
-    }
-  });
+  for (const [label, coords] of [
+    ['mid-Outer-Dark', midOuterDark],
+    ['rim coord (rim bonus fires)', rimOuterDark],
+  ] as const) {
+    it(`every seed byte yields a Common-tier planet — ${label}`, () => {
+      for (let s = 0; s <= 0xff; s++) {
+        const clamped = clampFirstLightDna(s);
+        const rarity = computeRarity({ dna: clamped, coords });
+        expect(rarity.tier, `seed ${s.toString(16)} @ ${label} produced ${rarity.tier} (score ${rarity.score})`).toBe('Common');
+      }
+    });
+  }
 
-  it('worst-case score stays below the Rare cutoff of 12', () => {
+  it('worst-case score stays below the Rare cutoff of 12 (including rim bonus)', () => {
     let max = 0;
     for (let s = 0; s <= 0xff; s++) {
       const clamped = clampFirstLightDna(s);
-      const rarity = computeRarity({ dna: clamped, coords: flCoords });
+      // Use the rim coord — it's the conservative worst case (adds +1 over
+      // mid-Outer-Dark).
+      const rarity = computeRarity({ dna: clamped, coords: rimOuterDark });
       if (rarity.score > max) max = rarity.score;
     }
-    // The bound proved by the clamp is 7 (G0 + exotic class + rare feature
-    // + rare aura). Allow some slack for combos we might add later, but
-    // still well below 12.
+    // The bound proved by the clamp is 8 (G0 + exotic class + rare feature
+    // + rare aura + rim). Allow some slack for combos we might add later,
+    // but still well below 12.
     expect(max).toBeLessThan(12);
   });
 });
