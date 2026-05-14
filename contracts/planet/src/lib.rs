@@ -68,7 +68,8 @@ pub enum Error {
     /// child per combination" rule is global and order-insensitive: once
     /// `(min, max)` is recorded in `SpentPair`, neither `commit_conjoin`
     /// nor `reveal_conjoin` will accept that pair again.
-    PairAlreadySpent = 14,
+    // 18: see Phase 1 PR #3 for codes 14..=17
+    PairAlreadySpent = 18,
 }
 
 /// Anti-grinding commit-reveal: two-step flow for mint_genesis and conjoin.
@@ -1009,9 +1010,13 @@ fn is_pair_spent(e: &Env, a: u32, b: u32) -> bool {
 }
 
 /// Mark `(parent_a, parent_b)` as spent and emit the `PairSpent` event.
-/// Idempotent: re-marking the same pair just refreshes the TTL. The
-/// reveal-time `is_pair_spent` check above is the actual gate; this is the
-/// write side.
+///
+/// Callers must ensure this runs only once per pair — enforced upstream by
+/// `is_pair_spent` at commit and reveal time. The storage write is
+/// idempotent (`set(&key, &true)` is a no-op when already `true`); the
+/// event publish is not, so a second invocation would emit a duplicate
+/// `PairSpent` event. The reveal-time `is_pair_spent` check is the actual
+/// gate; this is the write side.
 fn mark_pair_spent(e: &Env, a: u32, b: u32, child_id: u32) {
     let (lo, hi) = normalize_pair(a, b);
     let key = DataKey::SpentPair(lo, hi);

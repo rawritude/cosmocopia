@@ -53,7 +53,7 @@ export const Errors = {
   11: {message:"UnknownCommitment"},
   12: {message:"CommitmentNotReady"},
   13: {message:"InvalidCommitmentKind"},
-  14: {message:"PairAlreadySpent"}
+  18: {message:"PairAlreadySpent"}
 }
 
 
