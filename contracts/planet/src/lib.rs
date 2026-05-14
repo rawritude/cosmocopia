@@ -92,6 +92,11 @@ pub enum Error {
     SoulboundLocked = 15,
     /// `reveal_first_light` exhausted the coord-collision retry budget.
     FirstLightCoordCollision = 16,
+    /// A required storage slot was never populated. Today only fires on
+    /// First Light flows that depend on the constructor having wired
+    /// `NativeToken` + `BurnAddress`. Surface a typed error rather than the
+    /// misleading `NotAdmin` overload the dev shipped first (audit M-2).
+    Uninitialized = 17,
 }
 
 /// Anti-grinding commit-reveal: two-step flow for mint_genesis and conjoin.
@@ -489,12 +494,12 @@ impl PlanetContract {
             .storage()
             .instance()
             .get(&DataKey::NativeToken)
-            .ok_or(Error::NotAdmin)?;
+            .ok_or(Error::Uninitialized)?;
         let burn: Address = e
             .storage()
             .instance()
             .get(&DataKey::BurnAddress)
-            .ok_or(Error::NotAdmin)?;
+            .ok_or(Error::Uninitialized)?;
         let token = token::Client::new(e, &native);
         // Burn leg: keeper → burn address.
         token.transfer(&keeper, &burn, &FIRST_LIGHT_BURN_STROOPS);
@@ -1152,6 +1157,32 @@ impl NonFungibleToken for PlanetContract {
             soroban_sdk::panic_with_error!(e, Error::SoulboundLocked);
         }
         Enumerable::transfer_from(e, &spender, &from, &to, token_id);
+    }
+
+    /// Override `approve` to reject approvals on soulbound tokens (audit
+    /// H-4: defense in depth). Without this an off-chain listener watching
+    /// `approve` events would believe a soulbound token is transferable; a
+    /// later operator-driven `transfer_from` still hits the lock, but the
+    /// leak signals the wrong semantics. We reject at the approval gate so
+    /// no soulbound token ever has a live approval recorded.
+    ///
+    /// `approve_for_all` is intentionally left at the default. It is an
+    /// operator-level approval (covering every token the owner ever holds,
+    /// past and future), not a per-token grant. Rejecting it would force
+    /// non-soulbound tokens owned by the same keeper to also be unapproveable
+    /// — too broad. Any later `transfer_from` invoked under such an
+    /// operator approval is still gated by the soulbound check above.
+    fn approve(
+        e: &Env,
+        approver: Address,
+        approved: Address,
+        token_id: u32,
+        live_until_ledger: u32,
+    ) {
+        if is_soulbound(e, token_id) {
+            soroban_sdk::panic_with_error!(e, Error::SoulboundLocked);
+        }
+        Base::approve(e, &approver, &approved, token_id, live_until_ledger);
     }
 }
 

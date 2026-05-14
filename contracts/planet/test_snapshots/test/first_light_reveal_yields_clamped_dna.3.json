@@ -200,7 +200,7 @@
                               "symbol": "value"
                             },
                             "val": {
-                              "bytes": "9999999999999999999999999999999999999999999999999999999999999999"
+                              "bytes": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
                             }
                           }
                         ]
@@ -310,10 +310,10 @@
               "val": {
                 "vec": [
                   {
-                    "i32": 60
+                    "i32": 87
                   },
                   {
-                    "i32": 60
+                    "i32": 63
                   }
                 ]
               }
@@ -342,7 +342,7 @@
               },
               "durability": "persistent",
               "val": {
-                "bytes": "9999999999999999000000000000006e00949999999999999999999999999999"
+                "bytes": "bbbabbbb3b3bbbbb000000000000006e00b4bbbbbbbbbbbbbbbbbbbbbbbbbbbb"
               }
             }
           },
@@ -390,10 +390,10 @@
                     "symbol": "FirstLightCoord"
                   },
                   {
-                    "i32": 60
+                    "i32": 87
                   },
                   {
-                    "i32": 60
+                    "i32": 63
                   }
                 ]
               },
@@ -507,7 +507,7 @@
               },
               "durability": "persistent",
               "val": {
-                "bytes": "9999999999999999999999999999999999999900000000000000000000000000"
+                "bytes": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb00000000000000000000000000"
               }
             }
           },

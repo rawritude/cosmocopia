@@ -1,6 +1,6 @@
 {
   "generators": {
-    "address": 7,
+    "address": 8,
     "nonce": 0,
     "mux_id": 0
   },
@@ -200,7 +200,7 @@
                               "symbol": "value"
                             },
                             "val": {
-                              "bytes": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+                              "bytes": "d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2"
                             }
                           }
                         ]
@@ -310,10 +310,10 @@
               "val": {
                 "vec": [
                   {
-                    "i32": 60
+                    "i32": 87
                   },
                   {
-                    "i32": 60
+                    "i32": 63
                   }
                 ]
               }
@@ -342,7 +342,7 @@
               },
               "durability": "persistent",
               "val": {
-                "bytes": "7fffffffffffffff000000000000006e00f4ffffffffffffffffffffffffffff"
+                "bytes": "d2d252d232d2d2d2000000000000006e00d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2"
               }
             }
           },
@@ -390,10 +390,10 @@
                     "symbol": "FirstLightCoord"
                   },
                   {
-                    "i32": 60
+                    "i32": 87
                   },
                   {
-                    "i32": 60
+                    "i32": 63
                   }
                 ]
               },
@@ -507,7 +507,7 @@
               },
               "durability": "persistent",
               "val": {
-                "bytes": "ffffffffffffffffffffffffffffffffffffff00000000000000000000000000"
+                "bytes": "d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d200000000000000000000000000"
               }
             }
           },

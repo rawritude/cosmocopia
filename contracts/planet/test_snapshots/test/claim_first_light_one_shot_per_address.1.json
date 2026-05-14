@@ -352,10 +352,10 @@
               "val": {
                 "vec": [
                   {
-                    "i32": 60
+                    "i32": 87
                   },
                   {
-                    "i32": 60
+                    "i32": 63
                   }
                 ]
               }
@@ -384,7 +384,7 @@
               },
               "durability": "persistent",
               "val": {
-                "bytes": "a2a2a2a2a2a2a2a2000000000000006e00a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2"
+                "bytes": "a2a2a2222222a2a2000000000000006e00a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2"
               }
             }
           },
@@ -432,10 +432,10 @@
                     "symbol": "FirstLightCoord"
                   },
                   {
-                    "i32": 60
+                    "i32": 87
                   },
                   {
-                    "i32": 60
+                    "i32": 63
                   }
                 ]
               },

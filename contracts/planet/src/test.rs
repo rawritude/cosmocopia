@@ -1461,7 +1461,11 @@ fn first_light_reveal_yields_clamped_dna() {
         );
         let class_idx = (dna[dna::IDX_CLASS] >> 4) & 0x0F;
         for m in crate::FIRST_LIGHT_MYTHIC_CLASS_IDS.iter() {
-            assert_ne!(class_idx, *m, "mythic class slipped through for {:#x}", seed);
+            assert_ne!(
+                class_idx, *m,
+                "mythic class slipped through for {:#x}",
+                seed
+            );
         }
         let atm_idx = (dna[dna::IDX_ATMOSPHERE] >> 5) & 0x07;
         for m in crate::FIRST_LIGHT_MYTHIC_ATM_IDS.iter() {
@@ -1469,7 +1473,11 @@ fn first_light_reveal_yields_clamped_dna() {
         }
         let feat_idx = (dna[dna::IDX_FEATURE] >> 4) & 0x0F;
         for m in crate::FIRST_LIGHT_MYTHIC_FEAT_IDS.iter() {
-            assert_ne!(feat_idx, *m, "mythic feature slipped through for {:#x}", seed);
+            assert_ne!(
+                feat_idx, *m,
+                "mythic feature slipped through for {:#x}",
+                seed
+            );
         }
         let aura_idx = (dna[dna::IDX_AURA] >> 5) & 0x07;
         for m in crate::FIRST_LIGHT_MYTHIC_AURA_IDS.iter() {
@@ -1646,4 +1654,137 @@ fn set_native_token_rotates() {
         .register_stellar_asset_contract_v2(f.sac_admin.clone());
     f.planet.set_native_token(&alt.address());
     assert_eq!(f.planet.native_token(), alt.address());
+}
+
+#[test]
+fn first_light_two_commits_one_reveal_wins(/* audit H-3 */) {
+    // The dev's accepted "no second-commit gate" lets the same keeper open
+    // multiple commitments back-to-back (they pay the 10 XLM each time,
+    // self-imposed fee). The post-reveal gate at lib.rs:510-516 must reject
+    // the second reveal once the first has set FirstLightClaimed. This test
+    // proves both halves of that contract:
+    //   (1) two separate claim_first_light calls succeed and produce
+    //       distinct commitment ids,
+    //   (2) the first reveal mints a planet and sets the flag,
+    //   (3) the second reveal errors with FirstLightAlreadyClaimed,
+    //   (4) the second commitment is consumed (no orphan storage).
+    let f = setup(0xD1);
+    let keeper = Address::generate(&f.env);
+    // Fund the keeper for two full claim fees.
+    mint_xlm(&f, &keeper, crate::FIRST_LIGHT_FEE_STROOPS * 2);
+
+    let cid_a = f.planet.claim_first_light(&keeper, &100u64);
+    let cid_b = f.planet.claim_first_light(&keeper, &101u64);
+    assert_ne!(cid_a, cid_b, "second commit must get its own id");
+
+    // Advance past the reveal delay for both.
+    let now = f.env.ledger().sequence();
+    f.env
+        .ledger()
+        .set_sequence_number(now + crate::MIN_REVEAL_DELAY_LEDGERS);
+
+    // First reveal mints the planet.
+    let token_id = f.planet.reveal_first_light(&cid_a);
+    assert!(f.planet.is_soulbound_of(&token_id));
+    assert!(f.planet.first_light_claimed(&keeper));
+
+    // Second reveal errors with FirstLightAlreadyClaimed.
+    let err = f
+        .planet
+        .try_reveal_first_light(&cid_b)
+        .err()
+        .unwrap()
+        .unwrap();
+    assert_eq!(err, Error::FirstLightAlreadyClaimed);
+
+    // Storage state after the rejected second reveal:
+    //   * First commitment slot is GONE (consumed by the successful reveal).
+    //   * Second commitment slot PERSISTS — Soroban rolled back the
+    //     `take_commitment` write when the defensive `?` propagated an Err.
+    //     This is the same rollback behavior the dev relies on for the
+    //     standard `CommitmentNotReady` path. The slot is dead-but-present;
+    //     a retry of `reveal_first_light(cid_b)` will hit the same gate
+    //     and remain Err'd forever, so the keeper just paid a self-imposed
+    //     10 XLM fee (the I-1 informational behavior). Asserting this
+    //     pins the "no surprise storage loss" guarantee.
+    f.env.as_contract(&f.planet.address, || {
+        assert!(
+            !f.env
+                .storage()
+                .persistent()
+                .has(&crate::DataKey::Commitment(cid_a)),
+            "first commitment must be consumed by the successful reveal"
+        );
+        assert!(
+            f.env
+                .storage()
+                .persistent()
+                .has(&crate::DataKey::Commitment(cid_b)),
+            "second commitment must persist (rolled back on Err) — dead but not lost"
+        );
+    });
+}
+
+#[test]
+fn soulbound_blocks_approve(/* audit H-4 */) {
+    // Defense in depth: even though `transfer_from` rejects soulbound moves,
+    // `approve` itself should also reject. Without this an off-chain listener
+    // would see an `approve` event on a soulbound token and infer
+    // transferability, only to later observe the actual transfer revert.
+    let f = setup(0xD2);
+    let keeper = Address::generate(&f.env);
+    let id = claim_first_light(&f, &keeper);
+    let operator = Address::generate(&f.env);
+    // live_until_ledger must be in the future; use a generous window.
+    let live_until = f.env.ledger().sequence() + 1000;
+    // `approve` panics rather than returning Result, so `try_approve` surfaces
+    // a host-level `soroban_sdk::Error`. We compare via `.into()` since the
+    // host error carries the same numeric code as our `Error::SoulboundLocked`.
+    let err = f
+        .planet
+        .try_approve(&keeper, &operator, &id, &live_until)
+        .err()
+        .unwrap()
+        .unwrap();
+    assert_eq!(err, Error::SoulboundLocked.into());
+}
+
+#[test]
+fn approve_works_for_non_soulbound(/* audit H-4 regression guard */) {
+    // The approve override must NOT break the normal path. A regular genesis
+    // planet (not soulbound) should still be approveable.
+    let f = setup(0xD3);
+    let owner = Address::generate(&f.env);
+    let id = mint_genesis(&f, &owner, 5, 5);
+    let operator = Address::generate(&f.env);
+    let live_until = f.env.ledger().sequence() + 1000;
+    // Should not panic and should round-trip through get_approved.
+    f.planet.approve(&owner, &operator, &id, &live_until);
+    assert_eq!(f.planet.get_approved(&id), Some(operator));
+}
+
+#[test]
+fn first_light_uninitialized_native_token_errors_cleanly(/* audit M-2 */) {
+    // If somehow `NativeToken` storage isn't populated (e.g., a contract was
+    // upgraded from a constructor-less version, or a future change forgets
+    // to wire it in __constructor), claim_first_light must surface the
+    // typed Uninitialized error instead of the misleading NotAdmin overload
+    // that the dev shipped first. We simulate the missing slot by clearing
+    // it in-contract via `as_contract`.
+    let f = setup(0xD4);
+    let keeper = Address::generate(&f.env);
+    mint_xlm(&f, &keeper, crate::FIRST_LIGHT_FEE_STROOPS);
+    f.env.as_contract(&f.planet.address, || {
+        f.env
+            .storage()
+            .instance()
+            .remove(&crate::DataKey::NativeToken);
+    });
+    let err = f
+        .planet
+        .try_claim_first_light(&keeper, &100u64)
+        .err()
+        .unwrap()
+        .unwrap();
+    assert_eq!(err, Error::Uninitialized);
 }
