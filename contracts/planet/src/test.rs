@@ -1191,3 +1191,178 @@ fn legacy_parent_contributes_visible_population_not_zero() {
         );
     }
 }
+
+// ---------- Spent-pair registry (Phase 2: First Light) ----------
+//
+// "One child per parent-pair" rule. Once `(min(A, B), max(A, B))` has minted
+// a child, neither order can ever produce another. `commit_conjoin` is the
+// primary gate (fail fast — don't waste a commitment slot); `reveal_conjoin`
+// re-checks as defense in depth against a concurrent-commit race.
+
+use soroban_sdk::testutils::Events as _;
+use soroban_sdk::Event;
+
+#[test]
+fn conjoin_first_time_pair_succeeds_and_marks_spent() {
+    // Happy path: a fresh pair conjoins → child mints → SpentPair(min, max)
+    // is recorded. Verify both the on-chain read (no public view, so we
+    // peek via `as_contract`) and the absence of any error.
+    let f = setup(0x42);
+    let user = Address::generate(&f.env);
+    let a = mint_genesis(&f, &user, 0, 0);
+    let b = mint_genesis(&f, &user, 1, 1);
+
+    let _child = conjoin(&f, a, b, &user);
+
+    let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
+    let spent: bool = f.env.as_contract(&f.planet.address, || {
+        f.env
+            .storage()
+            .persistent()
+            .get(&crate::DataKey::SpentPair(lo, hi))
+            .unwrap_or(false)
+    });
+    assert!(spent, "SpentPair({},{}) must be true after conjoin", lo, hi);
+}
+
+#[test]
+fn conjoin_same_pair_twice_rejects_at_commit() {
+    // After (A, B) is spent, commit_conjoin(A, B) must reject with
+    // PairAlreadySpent — even if cooldown were waived.
+    let f = setup(0x43);
+    let user = Address::generate(&f.env);
+    let a = mint_genesis(&f, &user, 0, 0);
+    let b = mint_genesis(&f, &user, 1, 1);
+    let _ = conjoin(&f, a, b, &user);
+
+    // Advance past the cooldown so the SameParent / OnCooldown gates aren't
+    // what's rejecting us — we want to isolate the PairAlreadySpent gate.
+    let now = f.env.ledger().sequence();
+    f.env.ledger().set_sequence_number(now + 800);
+
+    let err = f
+        .planet
+        .try_commit_conjoin(&a, &b, &user, &200u64)
+        .err()
+        .unwrap()
+        .unwrap();
+    assert_eq!(err, Error::PairAlreadySpent);
+}
+
+#[test]
+fn conjoin_same_pair_twice_rejects_at_commit_reverse_order() {
+    // Order shouldn't matter: (B, A) hits the same SpentPair(min, max) slot.
+    let f = setup(0x44);
+    let user = Address::generate(&f.env);
+    let a = mint_genesis(&f, &user, 0, 0);
+    let b = mint_genesis(&f, &user, 1, 1);
+    let _ = conjoin(&f, a, b, &user);
+
+    let now = f.env.ledger().sequence();
+    f.env.ledger().set_sequence_number(now + 800);
+
+    // Flip the argument order. The normalized lookup must still reject.
+    let err = f
+        .planet
+        .try_commit_conjoin(&b, &a, &user, &200u64)
+        .err()
+        .unwrap()
+        .unwrap();
+    assert_eq!(err, Error::PairAlreadySpent);
+}
+
+#[test]
+fn conjoin_different_pair_after_spent_pair_succeeds() {
+    // (A, B) spent doesn't invalidate A — A can still conjoin with C.
+    // The rule is per-pair, not per-planet.
+    let f = setup(0x45);
+    let user = Address::generate(&f.env);
+    let a = mint_genesis(&f, &user, 0, 0);
+    let b = mint_genesis(&f, &user, 1, 1);
+    let c = mint_genesis(&f, &user, 2, 2);
+    let _ = conjoin(&f, a, b, &user);
+
+    // Clear cooldown so the next pair isn't blocked by OnCooldown.
+    let now = f.env.ledger().sequence();
+    f.env.ledger().set_sequence_number(now + 800);
+
+    // (A, C) is fresh — must succeed.
+    let child2 = conjoin(&f, a, c, &user);
+    assert_eq!(f.planet.owner_of(&child2), user);
+}
+
+#[test]
+fn reveal_conjoin_rejects_if_pair_spent_between_commit_and_reveal() {
+    // Race: commit (A, B) → before reveal, another path marks (A, B) spent
+    // → reveal must reject cleanly with PairAlreadySpent.
+    //
+    // In production this happens when two commits on the same pair land
+    // close enough that the first reveals before the second tries to. We
+    // simulate the "first reveal landed first" outcome by writing the
+    // SpentPair slot directly after the commit, then attempting the
+    // second commit's reveal.
+    //
+    // We can't easily commit twice (parents go on cooldown at commit), so
+    // we craft the race state directly: commit once, externally mark the
+    // pair spent, attempt to reveal.
+    let f = setup(0x46);
+    let user = Address::generate(&f.env);
+    let a = mint_genesis(&f, &user, 0, 0);
+    let b = mint_genesis(&f, &user, 1, 1);
+
+    let commitment_id = f.planet.commit_conjoin(&a, &b, &user, &200u64);
+
+    // Simulate a competing flow having already burned the pair.
+    let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
+    f.env.as_contract(&f.planet.address, || {
+        f.env
+            .storage()
+            .persistent()
+            .set(&crate::DataKey::SpentPair(lo, hi), &true);
+    });
+
+    // Advance past the reveal delay.
+    let now = f.env.ledger().sequence();
+    f.env
+        .ledger()
+        .set_sequence_number(now + crate::MIN_REVEAL_DELAY_LEDGERS);
+
+    let err = f
+        .planet
+        .try_reveal_conjoin(&commitment_id)
+        .err()
+        .unwrap()
+        .unwrap();
+    assert_eq!(err, Error::PairAlreadySpent);
+}
+
+#[test]
+fn pair_spent_event_emitted_on_first_conjoin() {
+    // Verify the PairSpent event fires once with the normalized pair and
+    // the child id. The event's data shape is checked via `to_xdr`.
+    let f = setup(0x47);
+    let user = Address::generate(&f.env);
+    let a = mint_genesis(&f, &user, 0, 0);
+    let b = mint_genesis(&f, &user, 1, 1);
+    let child = conjoin(&f, a, b, &user);
+
+    let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
+    let expected = crate::PairSpent {
+        parent_a: lo,
+        parent_b: hi,
+        child_id: child,
+    };
+
+    // Find a PairSpent matching the expected payload. We scan rather than
+    // assert position because conjoin emits several events (Born, Conjoin,
+    // PopulationExpressed, possibly RecessiveEmerged) and the order is an
+    // implementation detail.
+    let target_xdr = expected.to_xdr(&f.env, &f.planet.address);
+    let all = f.env.events().all();
+    let found = all.events().iter().any(|ev| ev == &target_xdr);
+    assert!(
+        found,
+        "expected PairSpent event for normalized pair ({}, {}) → child {}",
+        lo, hi, child
+    );
+}
