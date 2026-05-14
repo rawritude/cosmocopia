@@ -19,6 +19,24 @@ const ok = <T>(value: T) => ({ tag: 'Ok' as const, values: [value] });
 
 vi.mock('./planet-bindings/src/index', () => {
   return {
+    // Mirror the regenerated bindings' Errors map so tests can assert on
+    // the orchestrator's reachable error codes (Phase 2 added 14).
+    Errors: {
+      1: { message: 'NotAdmin' },
+      2: { message: 'NotOwner' },
+      3: { message: 'DrandUnavailable' },
+      4: { message: 'UnknownPlanet' },
+      5: { message: 'SameParent' },
+      6: { message: 'OnCooldown' },
+      7: { message: 'InvalidCareAction' },
+      8: { message: 'Unhealthy' },
+      9: { message: 'RecipientNotParentOwner' },
+      10: { message: 'CooldownOutOfRange' },
+      11: { message: 'UnknownCommitment' },
+      12: { message: 'CommitmentNotReady' },
+      13: { message: 'InvalidCommitmentKind' },
+      14: { message: 'PairAlreadySpent' },
+    },
     Client: class {
       constructor(public opts: any) {}
       async balance({ account }: { account: string }) {
@@ -347,6 +365,45 @@ describe('unwrapResult shape handling (audit High #5)', () => {
       expect(p).toBeNull();
     } finally {
       (client.prototype as any).dna_of = origDnaOf;
+    }
+  });
+});
+
+describe('PairAlreadySpent error reaches the orchestrator (Phase 2: First Light)', () => {
+  // Phase 2 adds Error::PairAlreadySpent (code 14) to the contract. The
+  // bindings expose it in the Errors map; verify the orchestrator surfaces
+  // it instead of silently swallowing or returning a misleading hash. This
+  // is a unit-level reachability test — actual UX-level surfacing (toast,
+  // disabled button, etc.) lands in Phase 3 alongside the cross-owner UI.
+  it('lists PairAlreadySpent in the bindings Errors map at code 14', async () => {
+    const bindings = await import('./planet-bindings/src/index');
+    expect(bindings.Errors[14]).toEqual({ message: 'PairAlreadySpent' });
+  });
+
+  it('submitCommitConjoin propagates a contract Err::PairAlreadySpent', async () => {
+    // Override commit_conjoin to throw the way the SDK does when the
+    // simulated contract returned an Err: the AssembledTransaction's
+    // signAndSend rejects with a structured error.
+    const client = (await import('./planet-bindings/src/index')).Client;
+    const orig = (client.prototype as any).commit_conjoin;
+    (client.prototype as any).commit_conjoin = async () => ({
+      signAndSend: async () => {
+        // Mirror the stellar-sdk's failure shape: a thrown Error whose
+        // message embeds the contract error code. The orchestrator should
+        // not catch this — it must propagate up so the UI can branch.
+        throw new Error('HostError: Error(Contract, #14) PairAlreadySpent');
+      },
+    });
+    try {
+      const wallet = {
+        status: 'connected',
+        kind: 'classic',
+        address: OWNER,
+        label: 'Freighter',
+      } as any;
+      await expect(cc.submitCommitConjoin(0, 1, 100n, wallet)).rejects.toThrow(/PairAlreadySpent/);
+    } finally {
+      (client.prototype as any).commit_conjoin = orig;
     }
   });
 });

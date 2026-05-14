@@ -52,7 +52,8 @@ export const Errors = {
   10: {message:"CooldownOutOfRange"},
   11: {message:"UnknownCommitment"},
   12: {message:"CommitmentNotReady"},
-  13: {message:"InvalidCommitmentKind"}
+  13: {message:"InvalidCommitmentKind"},
+  14: {message:"PairAlreadySpent"}
 }
 
 
