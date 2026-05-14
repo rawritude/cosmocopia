@@ -122,26 +122,30 @@ export async function listOwnedPlanets(address: string): Promise<Planet[]> {
 export async function getPlanet(id: number): Promise<Planet | null> {
   const client = readClient();
   try {
-    // Pull every view in parallel — pop + civ_tier are non-fatal: if the
-    // bindings are stale or the contract hasn't shipped those views yet,
-    // we fall back to undefined and let the consumer derive locally.
-    const [dnaTx, vitalsTx, coordsTx, popTx, civTx] = await Promise.all([
+    // Pull every view in parallel — pop, civ_tier, and owner_of are non-fatal:
+    // if the bindings are stale or the contract hasn't shipped those views
+    // yet, we fall back to undefined and let the consumer derive locally.
+    const [dnaTx, vitalsTx, coordsTx, popTx, civTx, ownerTx] = await Promise.all([
       client.dna_of({ id }),
       client.vitals_of({ id }),
       client.coords_of({ id }),
       client.population_of({ id }).catch(() => null),
       client.civ_tier_of({ id }).catch(() => null),
+      client.owner_of({ token_id: id }).catch(() => null),
     ]);
     const dnaBuf = unwrapResult<Buffer | Uint8Array>(dnaTx.result);
     const vitals = unwrapResult<Vitals>(vitalsTx.result);
     const [x, y] = unwrapResult<readonly [number, number]>(coordsTx.result);
 
-    // Each is Result<u32> — unwrap defensively so a transient Err on one
-    // doesn't blow up the whole planet read.
+    // Each optional view returns Result<u32> (or a raw string for owner_of)
+    // — unwrap defensively so a transient Err on one doesn't blow up the
+    // whole planet read.
     let population: number | undefined;
     let civTier: number | undefined;
+    let owner: string | undefined;
     try { if (popTx) population = Number(unwrapResult<number | bigint>(popTx.result)); } catch { /* leave undefined */ }
     try { if (civTx) civTier = Number(unwrapResult<number | bigint>(civTx.result)); } catch { /* leave undefined */ }
+    try { if (ownerTx) owner = ownerTx.result as unknown as string; } catch { /* leave undefined */ }
 
     return {
       id,
@@ -150,6 +154,7 @@ export async function getPlanet(id: number): Promise<Planet | null> {
       coords: { x, y },
       population,
       civTier,
+      owner,
     };
   } catch {
     return null;

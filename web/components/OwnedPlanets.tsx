@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import PlanetSprite from './PlanetSprite';
 import PlanetView from './PlanetView';
 import RarityBadge from './RarityBadge';
@@ -192,7 +193,14 @@ function PlanetCard({
       onClick={conjoinMode ? onPick : undefined}
     >
       <div className="card-titlebar">
-        <span style={{ flexShrink: 0 }}>#{planet.id}</span>
+        <Link
+          href={`/planet/${planet.id}`}
+          onClick={(e) => e.stopPropagation()}
+          style={{ flexShrink: 0, color: 'inherit', textDecoration: 'none' }}
+          title="open full planet detail"
+        >
+          #{planet.id}
+        </Link>
         <span className="tb-stripes" />
         <span style={{ flexShrink: 0, color: 'var(--stardust)' }}>({planet.coords.x}, {planet.coords.y})</span>
       </div>

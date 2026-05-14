@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import Link from 'next/link';
 import { listAllPlanets, type Planet } from '../lib/cosmocopia';
 import { renderPlanet } from '@cosmocopia/art';
 
@@ -367,6 +368,13 @@ function PlanetDetail({ planet }: { planet: Planet }) {
       <p style={{ margin: '0 0 8px', color: 'var(--stardust)', wordBreak: 'break-all', fontSize: 11 }}>
         owner: {planet.owner ? `${planet.owner.slice(0, 5)}…${planet.owner.slice(-4)}` : '?'}
       </p>
+      <Link
+        href={`/planet/${planet.id}`}
+        className="btn btn-primary btn-sm"
+        style={{ display: 'inline-block', marginBottom: 'var(--space-2)' }}
+      >
+        open detail →
+      </Link>
       <p
         style={{
           margin: 0,
