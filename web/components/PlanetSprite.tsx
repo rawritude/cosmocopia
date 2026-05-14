@@ -78,12 +78,17 @@ export default function PlanetSprite({
   return (
     <canvas
       ref={ref}
+      className="pixel-sprite"
       width={NATIVE_SIZE * scale}
       height={NATIVE_SIZE * scale}
       style={{
         imageRendering: 'pixelated',
-        width: NATIVE_SIZE * scale,
-        height: NATIVE_SIZE * scale,
+        // Cap to the rendered raster so we never upscale and blur, but allow
+        // the browser to shrink the canvas to fit narrow cards (otherwise a
+        // 192px sprite in a 180px card overflows).
+        maxWidth: '100%',
+        height: 'auto',
+        display: 'block',
       }}
     />
   );
