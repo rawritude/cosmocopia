@@ -272,15 +272,21 @@ pub const FIRST_LIGHT_POOL_STROOPS: i128 = 5 * 10_000_000;
 pub const SOULBOUND_RELEASE_LEDGERS: u32 = 120_960;
 
 /// Outer Dark sector threshold from `galaxy::sector_of`. The threshold is
-/// `r² >= 2500` (r >= 50). We pin a coord radius of 60 so derived coords
-/// land comfortably inside Outer Dark without hitting i32 boundaries.
-pub const FIRST_LIGHT_RING_RADIUS: i32 = 60;
+/// `r² >= 2500` (r >= 50). We pin a coord radius of 100: the keeper hash
+/// spreads samples uniformly across `[-100, 100]² = 40_401` lattice points,
+/// of which ≈ 24_000 (≈ 60%) fall in Outer Dark. Radius 60 (the prior value)
+/// gave only ≈ 6_800 valid points; the audit's H-2 recommended bumping for
+/// headroom.
+pub const FIRST_LIGHT_RING_RADIUS: i32 = 100;
 pub const FIRST_LIGHT_RING_R2: u64 =
     (FIRST_LIGHT_RING_RADIUS as u64) * (FIRST_LIGHT_RING_RADIUS as u64);
 
-/// Coord-collision retry budget: how many salts the contract tries before
-/// giving up. With ~120 distinct radial-60 lattice points the practical hit
-/// rate is tiny — 16 is comfortable headroom.
+/// Coord-collision retry budget. With ≈ 24_000 distinct Outer-Dark lattice
+/// points (see `FIRST_LIGHT_RING_RADIUS`) and a uniform-ish hash-derived
+/// sample, the per-iteration success rate is roughly 60% (inside-ring) ×
+/// (1 − P(coord taken)). For honest single-claim usage P(taken) ≈ 0, so
+/// the expected first-success salt is ~2. 16 keeps a wide safety margin
+/// for adversarial pre-claim grief over a known target keeper.
 pub const FIRST_LIGHT_RETRY_BUDGET: u32 = 16;
 
 /// Maximum value of the DNA rarity nibble (low 4 bits of byte 17) that
@@ -1428,9 +1434,18 @@ pub(crate) fn clamp_first_light_dna(e: &Env, dna: &BytesN<32>) -> BytesN<32> {
 ///   - both modded into `±FIRST_LIGHT_RING_RADIUS`
 ///   - if `r²` lands inside Outer Dark and the point isn't already taken,
 ///     return it; else bump the salt and retry up to FIRST_LIGHT_RETRY_BUDGET.
+///
+/// Audit H-2 history: an earlier version had a "push outward to ±span" fall-
+/// back when the hash landed inside the ring. With only 4 corner points,
+/// the fallback degraded to corner-spam after 4 keepers claimed those corners.
+/// We dropped the fallback and rely on salt rotation: with radius 100 the
+/// per-iteration success rate is ≈ 60% and 16 retries gives P(all fail) <
+/// 1e-6 even against adversarial pre-claiming.
 fn derive_first_light_coord(e: &Env, keeper: &Address) -> Result<(i32, i32), Error> {
     use soroban_sdk::Bytes;
     let keeper_bytes = keeper.to_string().to_bytes();
+    let span = FIRST_LIGHT_RING_RADIUS;
+    let modspan = (span as i64) * 2 + 1; // -span..=+span inclusive
     for salt in 0..FIRST_LIGHT_RETRY_BUDGET {
         let mut payload = Bytes::new(e);
         payload.append(&Bytes::from_array(e, &salt.to_be_bytes()));
@@ -1440,13 +1455,12 @@ fn derive_first_light_coord(e: &Env, keeper: &Address) -> Result<(i32, i32), Err
         let raw_x = i32::from_le_bytes([h[0], h[1], h[2], h[3]]);
         let raw_y = i32::from_le_bytes([h[4], h[5], h[6], h[7]]);
         // Mod into ±FIRST_LIGHT_RING_RADIUS. rem_euclid keeps the sign sane.
-        let span = FIRST_LIGHT_RING_RADIUS;
-        let modspan = (span as i64) * 2 + 1; // -span..=+span inclusive
         let x = (raw_x as i64).rem_euclid(modspan) as i32 - span;
         let y = (raw_y as i64).rem_euclid(modspan) as i32 - span;
 
-        // If we landed inside the Outer-Dark sector and the coord is free,
-        // we're done.
+        // Only accept the point if it lands inside Outer Dark AND is free.
+        // Otherwise bump the salt and retry. No "push outward" fallback —
+        // see the audit-H-2 comment above for why.
         let r2 = (x as i64).unsigned_abs() * (x as i64).unsigned_abs()
             + (y as i64).unsigned_abs() * (y as i64).unsigned_abs();
         if r2 >= FIRST_LIGHT_RING_R2
@@ -1456,21 +1470,6 @@ fn derive_first_light_coord(e: &Env, keeper: &Address) -> Result<(i32, i32), Err
                 .has(&DataKey::FirstLightCoord(x, y))
         {
             return Ok((x, y));
-        }
-
-        // Push outward if the random point fell *inside* Outer-Dark's
-        // radius. We do this by clamping each axis to the nearest sign
-        // multiplied by `span` so r² is exactly `2 * span²` ≥ ring_r2.
-        let (px, py) = (
-            if x >= 0 { span } else { -span },
-            if y >= 0 { span } else { -span },
-        );
-        if !e
-            .storage()
-            .persistent()
-            .has(&DataKey::FirstLightCoord(px, py))
-        {
-            return Ok((px, py));
         }
     }
     Err(Error::FirstLightCoordCollision)
