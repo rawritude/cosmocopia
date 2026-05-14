@@ -398,3 +398,79 @@ All green.
 ---
 
 **Verdict: CLEARED PENDING — all 4 blocking findings (C-1, H-1, H-3, H-4) are closed; H-2 is functionally closed (corner-fallback gone, retry bounded, FL coords land in Outer Dark) but carries forward an unresolved comment-accuracy issue that morphs M-5 into a new Medium (N-1). N-1 is non-blocking for merge but should be addressed in a follow-up — either by relaxing the coord gate to the actual Outer-Dark threshold (recovering the ~80% per-iteration success the audit originally envisioned) or by correcting the comments to reflect the stricter gate the dev chose. N-2/N-3/N-4 are doc/test-fidelity issues, all non-blocking.**
+
+---
+
+## Re-audit (round 3)
+
+Performed on commit `b29e522` "fix(contract): close re-audit N-1..N-4 — decouple sample span from Outer-Dark threshold". Scope: independently verify the four findings from round 2 (N-1 Medium, N-2 Low, N-3/N-4 Info) are closed and that no regression slipped in with the constant rename + threshold change. Branch `worktree-agent-adab0703e1091c049`, worktree `/home/raph/workspace/projects/planets/.claude/worktrees/agent-adab0703e1091c049`.
+
+### Per-finding verification
+
+**N-1 (Medium) — CLOSED.** The fix decouples the sampling span from the Outer-Dark threshold.
+
+Code (lib.rs:279–298):
+- `FIRST_LIGHT_SAMPLE_SPAN = 100` (i32) — sampling extent only.
+- `FIRST_LIGHT_OUTER_DARK_R2 = 2500` (u64) — hardcoded, matches `galaxy::sector_of` (galaxy.rs:20 — `r2 < 2500 → Frontier`, else Outer Dark).
+- The two constants are now genuinely independent: the threshold is no longer derived from the sampling span via `span * span`.
+
+`derive_first_light_coord` (lib.rs:1481–1510):
+- `span = FIRST_LIGHT_SAMPLE_SPAN` used for `modspan` (line 1485) and the `± span` shift (lines 1495–1496).
+- `r2 >= FIRST_LIGHT_OUTER_DARK_R2` is the accept gate (line 1503). Correct.
+- No other code path references the old constants (`grep -rn FIRST_LIGHT_RING_R2\|FIRST_LIGHT_RING_RADIUS` in the worktree → 0 hits; the only remaining `FIRST_LIGHT_RING_*` symbol is `FIRST_LIGHT_RING_COUNT_CAP`, which is the unrelated ring-feature cap from the DNA clamp).
+
+Empirical math (Python sweep over x, y ∈ [-100, 100], 40,401 lattice points):
+- Points with `r² >= 2500`: **32,576** (success rate 80.63%).
+- Commit message claim "~32,500" matches; off by 0.23%, well within "approximately".
+- `P(one fail) = 0.1937`; `P(all 16 fail) ≈ 3.92e-12`. Commit message says "< 1e-11". Holds (3.92e-12 < 1e-11). Threshold the audit cared about ("about 1 in 55 will exhaust their salt budget" under the old gate) is now <1 in 250 billion — comfortably negligible.
+- `galaxy::sector_of`'s Outer Dark threshold (`r² >= 2500`, galaxy.rs:20–23) matches the new gate. The `first_light_coord_in_outer_dark` test (test.rs:1295–1308) asserts `sector_of(x, y) == SECTOR_OUTER_DARK` for derived coords; it passes under the new constant (test run: 66/66, listed in output).
+
+Docstring accuracy: lib.rs:285–290 explicitly notes the previous bug ("conflated the sampling span with the threshold and gated on `r² >= 10_000` (re-audit finding N-1)") and the corrected math. The N-1 history is now in the source.
+
+**N-2 (Low) — CLOSED.** `web/lib/firstLightFloor.test.ts` (full re-read):
+- The stale "(50 <= r <= ~85 in the ±60 clamp)" comment is gone. The new comment at lines 92–97 correctly describes the ±100 sampling span and the +1 rim bonus at `r² >= 10000`.
+- Two coord cases are now tested (lines 98–99): `midOuterDark = {42, 42}` (r ≈ 59, no rim bonus) and `rimOuterDark = {96, 32}`.
+- Verified rim coord math: 96² + 32² = 9216 + 1024 = **10240 ≥ 10000**. The +1 rim bonus at art/src/rarity.ts:120 (`else if (d2 >= 10000) add('Location', 1, 'rim coordinate')`) does fire. The test loop (lines 101–112) runs the entire 256-seed sweep against both coord cases, plus a separate worst-case bound check (lines 114–127) that uses the rim coord and asserts `max < 12`. Production path is now genuinely covered.
+- Frontend test count went 32 → 33 (one new `it()` added for the rim-coord parameterisation), matching the commit message claim.
+
+**N-3 (Info) — CLOSED.** `clamp_first_light_dna` worst-case docstring (lib.rs:1367–1376):
+- Lines 1372–1374 add a new row: `+1 (rim coordinate bonus when r² ≥ 10_000 — fires for the subset of FL coords beyond radius 100; FL coords with r in [50, 100) skip this row)`.
+- Sum line at 1376 updated `= 7` → `= 8`. Tally: 3 (G0) + 2 (exotic class) + 1 (rare feature) + 1 (rare aura) + 1 (rim) = 8. Matches.
+- The clarification "subset of FL coords beyond radius 100" is correct — under the new gate, FL coords have r ∈ [50, ~141], and the rim bonus only fires for r ≥ 100. Good edge-case nuance.
+- Note that `8 < 12` (Rare cutoff) still holds; the bound was always under-tight but is now correct.
+
+**N-4 (Info) — CLOSED.** `clamp_first_light_dna` atmosphere clause docstring (lib.rs:1384–1386):
+- Was: `{0, 0, 3} (none / none / storm)`.
+- Now: `{0, 2, 3} (none / thick / storm)`.
+- Verify mapping by hand: `4 & 0b011 = 0`, `6 & 0b011 = 2`, `7 & 0b011 = 3`. Correct.
+- Inline body comment at lib.rs:1417–1419 already had the right mapping; docstring is now consistent.
+
+### Regression checks
+
+- **No code path still hardcodes 10_000 as a gate.** Only two `10_000` references remain in `contracts/planet/src/lib.rs`: line 288 (historical reference inside the N-1 explanation comment) and line 1372 (rim-bonus row in `clamp_first_light_dna` docstring, citing the *art-package* rim threshold). Neither is a code gate.
+- **No stale constant references.** `grep -rn "FIRST_LIGHT_RING_R2\|FIRST_LIGHT_RING_RADIUS"` returns zero hits in code; the audit doc still mentions them in the round-2 history (expected).
+- **`first_light_coord_in_outer_dark` test still consistent.** Asserts the derived coord lands in Outer Dark per `sector_of` (≥ 2500). New gate is exactly that. Passes.
+- **`galaxy::sector_of` threshold unchanged**, still `r² >= 2500` (galaxy.rs:20–23). Consistent with the new contract gate.
+- **Test JSON deltas accounted for.** The 13 modified test snapshot files in the commit are the deterministic re-rolls of derived coords (the modspan calculation is identical, but the success gate now accepts more samples → first-success salt indices changed → snapshot coord values changed). No semantic regression; tests pass deterministically.
+
+### CI gates (round 3 re-run)
+
+| Gate | Result |
+| --- | --- |
+| `cargo fmt --check` | PASS (no output) |
+| `cargo clippy --all-targets -- -D warnings` | PASS (no warnings) |
+| `cargo test` | **66 passed / 0 failed** |
+| `stellar contract build` | PASS — `planet.optimized.wasm` = **46,275 B** (1 B smaller than round 2's 46,276 B; well under 50 KB cap) |
+| `npx tsc --noEmit` (web) | PASS (no output) |
+| `npm test` (web / vitest) | **33 passed / 0 failed** (+1 vs. round 2's 32, from the new rim-coord parameterisation) |
+| `npm run build` (web / next) | PASS — all routes built, including `/planet/[id]` dynamic route |
+
+All green. Test count delta matches commit message exactly.
+
+### New findings (round 3)
+
+None. The fix is surgical, well-commented, and the docstrings now reflect the production behaviour faithfully. No new lint, no doc/code drift, no constant-name aliasing left behind.
+
+---
+
+**Verdict: CLEARED FOR MERGE — all findings closed, no regressions**
