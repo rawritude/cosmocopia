@@ -42,17 +42,18 @@ jobs:
       - name: cargo test
         run: cargo test --workspace
 
-      - name: stellar contract build
+      - name: stellar contract build (optimized)
         run: |
           curl -fsSL https://github.com/stellar/stellar-cli/raw/main/install.sh | sh
           export PATH="$HOME/.cargo/bin:$PATH"
-          stellar contract build
+          stellar contract build --optimize
 
-      - name: Verify wasm size
+      - name: Verify optimized wasm size
         run: |
-          size=$(stat -c%s target/wasm32v1-none/release/planet.wasm)
-          echo "wasm size: $size bytes"
-          # 64KB Soroban hard limit — fail well below.
+          size=$(stat -c%s target/wasm32v1-none/release/planet.optimized.wasm)
+          echo "optimized wasm size: $size bytes"
+          # 64KB Soroban hard limit — fail well below. Check the optimized
+          # artifact since that's what actually deploys.
           if [ "$size" -gt 50000 ]; then
             echo "WASM too large ($size > 50000)"
             exit 1
