@@ -209,3 +209,44 @@ This means there is **no path** for an attacker to make the contract see a previ
 The "rule is forever" invariant holds in practice. The 30-day TTL is irrelevant to enforcement — only relevant to ongoing storage rent. No code change required.
 
 Reference: https://developers.stellar.org/docs/learn/fundamentals/contract-development/storage/state-archival
+
+---
+
+## Re-audit (round 2)
+
+Re-audit of fix commits `3e105bf` (H-1, L-1, L-4), `a3d9bda` (M-1, M-2, L-3), `b1d5f8b` (M-3 doc reclassification) on branch `worktree-agent-a985eba3fa450fd58`.
+
+### Per-finding closure status
+
+| ID  | Severity (orig) | Status | Notes |
+|-----|-----------------|--------|-------|
+| H-1 | High            | **Closed** | `PairAlreadySpent = 18` in `contracts/planet/src/lib.rs:72` with a coordination comment referencing Phase 1 PR #3's reserved range (14..=17). `web/lib/planet-bindings/src/index.ts:56` updated to key `18`. No discriminant duplicates in the Error enum (1..=13 plus 18). |
+| M-1 | Medium          | **Closed** | `reveal_conjoin_does_not_mark_spent_pair_if_drand_unavailable` (`contracts/planet/src/test.rs:1391`) commits via `commit_conjoin`, clears the drand mock seed via the new `MockDrand::clear`, advances past `MIN_REVEAL_DELAY_LEDGERS`, asserts `Error::DrandUnavailable`, then verifies `SpentPair(lo,hi)` slot is absent via `env.as_contract` + `storage().persistent().has(...)`. Both halves of the assertion are present. |
+| M-2 | Medium          | **Closed** | `reveal_conjoin_rejects_second_commit_after_real_race_with_first_reveal` (`contracts/planet/src/test.rs:1445`) drives the canonical sequence end-to-end via real `commit_conjoin` + `reveal_conjoin` entrypoints: commit (A,B) at N, advance to N+721 (past `DEFAULT_COOLDOWN`), commit (A,B) again, reveal first → marks SpentPair, advance, reveal second → `Error::PairAlreadySpent`. No `env.as_contract` shortcuts on the race itself. The pre-existing unit-level pin `reveal_conjoin_rejects_if_pair_spent_between_commit_and_reveal` (test.rs:1315) is retained as a focused regression guard — non-redundant given it isolates the reveal-time `is_pair_spent` gate from the commit-side gate. |
+| M-3 | Medium → Informational | **Closed (reclassified)** | `b1d5f8b` appendix cites Protocol 25 (live on testnet + mainnet), CAP-0066 auto-restoration via `InvokeHostFunctionOp`, the "tx fails at apply stage prior to contract execution" semantic for archived keys in footprint without restore, and links the Stellar state-archival doc. Verdict logic stands: all attacker paths fail before contract code runs, so the "has() returns false for archived entry" exploit is not real on the live network. Commit subject line references "Protocol 23" (the CAP-0066 introduction protocol); body and audit body correctly cite Protocol 25 as the deployed version — accurate, just a minor cosmetic mismatch in the subject. |
+| L-1 | Low             | **Closed** | `mark_pair_spent` doc-comment (`contracts/planet/src/lib.rs:1013-1019`) now explicitly distinguishes storage-write idempotency (`set(&key, &true)` is a no-op when already `true`) from event-publish non-idempotency (a second invocation would emit a duplicate `PairSpent`), and re-states that the reveal-time `is_pair_spent` check is the actual gate. Accurate. |
+| L-3 | Low             | **Closed** | `conjoin_different_pair_after_spent_pair_succeeds` (test.rs:1282) now mints a fourth genesis planet D and asserts both `(A, C)` after `(A, B)` is spent AND `(B, D)` succeed, with cooldown advances between each. The per-pair-not-per-planet rule is pinned symmetrically. |
+| L-4 | Low             | **Closed** | `web/lib/cosmocopia.test.ts` now uses `vi.importActual` to re-export the real `Errors` map from `./planet-bindings/src/index`, overriding only `Client`. The hand-rolled Errors literal is gone; future enum renumbers cannot silently desync the test mock. |
+
+All Lows from the original audit not listed here (L-2, L-5) were already informational-level polish and were not part of the fix scope; they remain as-is and do not block merge.
+
+### New findings
+
+None. The L-4 refactor (replacing the hand-rolled mock with `vi.importActual`) did not break any existing web test — `npm run test` reports 22/22 passing, same count as pre-fix. No new code paths were introduced; the test changes (`MockDrand::clear`, M-1 + M-2 + extended L-3) are additive.
+
+### CI gates
+
+| Gate | Result |
+|------|--------|
+| `cargo fmt --all -- --check` (in `contracts/`) | PASS |
+| `cargo clippy --workspace --all-targets -- -D warnings` | PASS |
+| `cargo test --workspace` | PASS — 56 passed / 0 failed (was 54, +2 from M-1 + M-2 as predicted) |
+| `stellar contract build` | PASS |
+| `stellar contract build --optimize` (via `stellar contract optimize`) | PASS — `planet.optimized.wasm = 41,294 bytes` (matches claim exactly; +98 B over 41,196 B baseline due to L-1 doc-comment + coordination comment) |
+| `tsc --noEmit` (in `web/`) | PASS |
+| `npm run test` (in `web/`) | PASS — 22/22 (unchanged, as predicted) |
+| `npm run build` (in `web/`) | PASS — all routes compiled |
+
+### Verdict
+
+CLEARED FOR MERGE — all findings closed
