@@ -36,6 +36,10 @@ pub enum DataKey {
     /// minted before the dominance system shipped — those legacy planets
     /// behave as if they carried all-zero recessives.
     Latent(u32),
+    /// Civilization tier (u8 in 0..=4). Stored as an additive key — *not*
+    /// folded into the Vitals struct — so pre-civ-tier planets keep
+    /// deserializing. Absent ⇒ tier 0 (Primitive).
+    CivTier(u32),
 }
 
 #[contracterror]
@@ -136,6 +140,26 @@ pub struct RecessiveEmerged {
 pub struct Cared {
     pub id: u32,
     pub action: u32,
+}
+
+/// Emitted on every new planet creation (genesis + conjoin) with the
+/// expressed population type (0..5). Frontends can index by `id` to drive
+/// "your planet birthed an Avian colony" UX without reading the latent blob.
+#[contractevent(topics = ["pop"])]
+pub struct PopulationExpressed {
+    #[topic]
+    pub id: u32,
+    pub population: u32, // 0..5 — see art/src/scene.ts:POPULATIONS
+}
+
+/// Emitted whenever `care` ratchets a planet's civ_tier up. Pinned `from`/`to`
+/// types are u32 because contractevent macros don't accept u8 directly.
+#[contractevent(topics = ["civ"])]
+pub struct CivTierChanged {
+    #[topic]
+    pub id: u32,
+    pub from: u32,
+    pub to: u32,
 }
 
 #[contractevent(topics = ["moved"])]
@@ -253,12 +277,27 @@ impl PlanetContract {
             TTL_THRESHOLD,
             TTL_EXTEND_TO,
         );
+        // Genesis planets start at civ_tier 0 (Primitive).
+        e.storage()
+            .persistent()
+            .set(&DataKey::CivTier(token_id), &0u32);
+        e.storage().persistent().extend_ttl(
+            &DataKey::CivTier(token_id),
+            TTL_THRESHOLD,
+            TTL_EXTEND_TO,
+        );
 
+        let population = dna::population_of_latent(&latent.to_array()) as u32;
         Born {
             owner: c.to,
             id: token_id,
             generation: 0,
             drand_round: c.target_round,
+        }
+        .publish(e);
+        PopulationExpressed {
+            id: token_id,
+            population,
         }
         .publish(e);
         e.storage()
@@ -392,10 +431,31 @@ impl PlanetContract {
             .persistent()
             .set(&DataKey::Vitals(child_id), &starting);
 
+        // Child civ_tier = min(parent_a.civ_tier, parent_b.civ_tier). The
+        // child can't exceed the *weaker* parent — a Primitive partner pins
+        // the child at Primitive even when conjoined with a Spacefaring one.
+        // Care progress beyond that is then earned per-planet. Both parents
+        // default to 0 if their tier wasn't recorded (legacy planet) — note
+        // that this means any conjoin with a legacy parent seeds the child
+        // at tier 0 regardless of the other parent (audit M-3 — documented,
+        // not changed in this pass; see test conjoin_with_legacy_parent_*).
+        let tier_a = read_civ_tier(e, parent_a);
+        let tier_b = read_civ_tier(e, parent_b);
+        let child_tier = tier_a.min(tier_b);
+        e.storage()
+            .persistent()
+            .set(&DataKey::CivTier(child_id), &(child_tier as u32));
+        e.storage().persistent().extend_ttl(
+            &DataKey::CivTier(child_id),
+            TTL_THRESHOLD,
+            TTL_EXTEND_TO,
+        );
+
         // Re-extend parents' TTL since the conjoin reveal touched them.
         extend_planet_ttl(e, parent_a);
         extend_planet_ttl(e, parent_b);
 
+        let population = dna::population_of_latent(&child_latent.to_array()) as u32;
         Born {
             owner: c.to,
             id: child_id,
@@ -408,6 +468,11 @@ impl PlanetContract {
             parent_a,
             parent_b,
             drand_round: c.target_round,
+        }
+        .publish(e);
+        PopulationExpressed {
+            id: child_id,
+            population,
         }
         .publish(e);
 
@@ -435,6 +500,12 @@ impl PlanetContract {
 
     /// Apply a care action. Caller must own the planet. Extends the planet's
     /// TTL — see audit Critical #4.
+    ///
+    /// After applying the care effect, `care` re-evaluates the planet's
+    /// civ_signal (a 0..255 score from class-specific vital weights) and
+    /// ratchets the stored civ_tier up if `signal / 51` exceeds it. Care
+    /// never demotes — if the signal has fallen below the stored tier the
+    /// planet keeps its current tier until the next ratchet evaluation.
     pub fn care(e: &Env, id: u32, action: u32) -> Result<(), Error> {
         let owner = Base::owner_of(e, id);
         owner.require_auth();
@@ -448,6 +519,26 @@ impl PlanetContract {
         let projected = stats::project(&read_vitals(e, id)?, now, class, coords);
         let updated = stats::apply_care(&projected, class, care, now);
         e.storage().persistent().set(&DataKey::Vitals(id), &updated);
+
+        // Civ-tier ratchet: target tier = signal / 51 (clamped to 4). Only
+        // writes if `target > stored`. Demotion happens lazily — a fallen
+        // signal doesn't persist a write here, the stored tier just stops
+        // increasing until vitals recover.
+        let signal = stats::civ_signal(&updated, class);
+        let current = read_civ_tier(e, id);
+        let target = core::cmp::min(4u8, signal / 51);
+        if target > current {
+            e.storage()
+                .persistent()
+                .set(&DataKey::CivTier(id), &(target as u32));
+            CivTierChanged {
+                id,
+                from: current as u32,
+                to: target as u32,
+            }
+            .publish(e);
+        }
+
         extend_planet_ttl(e, id);
 
         Cared { id, action }.publish(e);
@@ -498,6 +589,29 @@ impl PlanetContract {
         let projected = stats::project(&read_vitals(e, id)?, now, class, coords);
         extend_planet_ttl(e, id);
         Ok(projected)
+    }
+
+    /// Return the planet's expressed population type (0..5). Maps directly
+    /// to art/src/scene.ts:POPULATIONS. Returns 0 (Humanoid) for legacy
+    /// planets with no latent blob.
+    pub fn population_of(e: &Env, id: u32) -> Result<u32, Error> {
+        // Confirm the planet exists; surfaces UnknownPlanet for bad ids.
+        let _ = read_dna(e, id)?;
+        let latent = read_latent(e, id);
+        extend_planet_ttl(e, id);
+        Ok(dna::population_of_latent(&latent.to_array()) as u32)
+    }
+
+    /// Return the planet's stored civilization tier (0..=4). Reads the
+    /// `CivTier(id)` slot directly with a 0 fallback — view calls do *not*
+    /// project demotion based on current signal, so a tier earned through
+    /// care stays "on file" until the next `care` ratchet evaluation. This
+    /// keeps the view cheap and avoids spurious storage writes from reads.
+    pub fn civ_tier_of(e: &Env, id: u32) -> Result<u32, Error> {
+        let _ = read_dna(e, id)?;
+        let tier = read_civ_tier(e, id);
+        extend_planet_ttl(e, id);
+        Ok(tier as u32)
     }
 
     pub fn coords_of(e: &Env, id: u32) -> Result<(i32, i32), Error> {
@@ -722,6 +836,13 @@ fn extend_planet_ttl(e: &Env, id: u32) {
             .persistent()
             .extend_ttl(&latent_key, TTL_THRESHOLD, TTL_EXTEND_TO);
     }
+    // CivTier is also absent for pre-civ-tier planets — same `has` guard.
+    let civ_key = DataKey::CivTier(id);
+    if e.storage().persistent().has(&civ_key) {
+        e.storage()
+            .persistent()
+            .extend_ttl(&civ_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+    }
 }
 
 fn read_dna(e: &Env, id: u32) -> Result<BytesN<32>, Error> {
@@ -761,10 +882,16 @@ fn read_latent(e: &Env, id: u32) -> BytesN<32> {
 
 /// Read a planet's latent for use in `crossover_with_latent`. For planets
 /// with stored latents this is identical to `read_latent`. For pre-dominance
-/// legacy planets we synthesize a latent whose R1[i] = R2[i] = visible
-/// DNA[i] for each trait slot. With this shape, `sample_allele` returns
-/// the parent's visible D byte 100% of the time, instead of mixing in
-/// 0x00 from the zero fallback ~30% of the time (audit M3).
+/// legacy planets we synthesize a latent so the parent contributes its
+/// visible D for every allele slot instead of injecting 0x00.
+///
+/// - Trait slots 0..7: R1[i] = R2[i] = visible DNA[i]. Mirrors audit M3.
+/// - Population slot (latent 16/17/18): R1 = R2 = D = visible DNA[18].
+///   Byte 18 is the same one `derivePopulation` reads in the frontend, so
+///   legacy parents contribute the population they already display.
+///
+/// With this shape, `sample_allele` returns the parent's visible D byte
+/// 100% of the time for both trait slots and population.
 fn read_latent_for_breeding(e: &Env, id: u32, dna: &BytesN<32>) -> BytesN<32> {
     if let Some(latent) = e.storage().persistent().get(&DataKey::Latent(id)) {
         return latent;
@@ -775,7 +902,26 @@ fn read_latent_for_breeding(e: &Env, id: u32, dna: &BytesN<32>) -> BytesN<32> {
         .copy_from_slice(&d[..dna::TRAIT_SLOTS]);
     out[dna::LATENT_R2_OFFSET..dna::LATENT_R2_OFFSET + dna::TRAIT_SLOTS]
         .copy_from_slice(&d[..dna::TRAIT_SLOTS]);
+    // Population trio — seed D/R1/R2 from visible DNA byte 18 so legacy
+    // descendants don't all collapse to pop=0 (Humanoid). Closes audit M-2.
+    let pop_seed = d[dna::IDX_RESERVED];
+    out[dna::LATENT_POP_D] = pop_seed;
+    out[dna::LATENT_POP_R1] = pop_seed;
+    out[dna::LATENT_POP_R2] = pop_seed;
     BytesN::from_array(e, &out)
+}
+
+/// Read a planet's stored civ_tier with a 0 fallback for legacy / pre-civ-tier
+/// planets. Stored as u32 (Soroban's persistent storage doesn't accept u8
+/// directly); narrowed to u8 here and clamped to the public range 0..=4 so
+/// any out-of-range value already in storage can't surface as garbage.
+fn read_civ_tier(e: &Env, id: u32) -> u8 {
+    let raw: u32 = e
+        .storage()
+        .persistent()
+        .get(&DataKey::CivTier(id))
+        .unwrap_or(0u32);
+    core::cmp::min(raw, 4) as u8
 }
 
 fn check_cooldown(e: &Env, id: u32, now: u32) -> Result<(), Error> {

@@ -25,14 +25,32 @@ pub const TRAIT_SLOTS: usize = 8;
 /// Layout of the latent blob (BytesN<32>):
 /// - bytes 0..8:   R1 allele for trait slot i
 /// - bytes 8..16:  R2 allele for trait slot i
-/// - bytes 16..32: reserved (zero today; reserved for future population /
-///   civ-tier recessives or lineage signatures).
+/// - bytes 16..19: Population gene (D / R1 / R2). See `LATENT_POP_*` below.
+/// - bytes 19..32: reserved (zero today; reserved for future genes —
+///   the next single-allele-trio gene can take 19/20/21, etc.).
 pub const LATENT_LEN: usize = 32;
 pub const LATENT_R1_OFFSET: usize = 0;
 pub const LATENT_R2_OFFSET: usize = TRAIT_SLOTS; // 8
 
+/// Population gene: a single dominance-trio slot stored at bytes 16/17/18
+/// of the latent blob. Public-facing population type is `latent[16] % 6`
+/// mapping to the six populations declared in art/src/scene.ts.
+pub const LATENT_POP_D: usize = 16;
+pub const LATENT_POP_R1: usize = 17;
+pub const LATENT_POP_R2: usize = 18;
+/// Number of dedicated population-style gene slots so far. Future single-trio
+/// genes can claim LATENT_POP_D + 3 * LATENT_POP_SLOTS .. and bump this.
+pub const LATENT_POP_SLOTS: usize = 1;
+
 pub fn class_of(dna: &[u8; DNA_LEN]) -> u8 {
     (dna[IDX_CLASS] >> 4) & 0x0F
+}
+
+/// Decode the expressed population type from a latent blob. The expressed D
+/// byte lives at `LATENT_POP_D`; the public-facing population is `D % 6`
+/// per art/src/scene.ts's six-population mapping.
+pub fn population_of_latent(latent: &[u8; LATENT_LEN]) -> u8 {
+    latent[LATENT_POP_D] % 6
 }
 
 pub fn write_birth_round(dna: &mut [u8; DNA_LEN], round: u64) {
@@ -95,7 +113,12 @@ pub fn latent_from_seed(env: &Env, seed: &BytesN<32>, token_id: u32) -> BytesN<3
         out[LATENT_R1_OFFSET + i] ^= id[i & 3];
         out[LATENT_R2_OFFSET + i] ^= id[(i + 1) & 3];
     }
-    mix_token_id_into_latent(&mut out, token_id);
+    // Population gene D/R1/R2 (bytes 16/17/18). Use seed bytes 24/25/26 —
+    // independent from the trait slot bytes used above — and stir token_id
+    // in so same-round siblings get distinct populations.
+    out[LATENT_POP_D] = s[24] ^ id[0];
+    out[LATENT_POP_R1] = s[25] ^ id[1];
+    out[LATENT_POP_R2] = s[26] ^ id[2];
     BytesN::from_array(env, &out)
 }
 
@@ -193,6 +216,40 @@ pub fn crossover_with_latent(
         out_latent[LATENT_R2_OFFSET + i] = child_r2;
     }
 
+    // Population gene crossover. Mirrors `sample_allele` + swap + R2-pool +
+    // mutation from the trait-slot loop above, applied to the single
+    // population trio at bytes 16/17/18 of each parent's latent.
+    //
+    // Entropy mapping (1 slot only today; future per-slot loop would shift):
+    //   rr[7]  → parent A's (D, R1, R2) sample roll
+    //   rr[15] → parent B's (D, R1, R2) sample roll
+    //   rr[23] → swap_bit (high bit) + mutation gate (low 6 bits)
+    //   rr[31] → R2 pool index (low 2 bits)
+    // These bytes were already consumed for trait slot 7 above; reuse is
+    // intentional and benign — population is a separate domain (0..5), so
+    // the correlation with trait slot 7 is just a slight reduction in
+    // independent entropy, not a logical conflict.
+    for i in 0..LATENT_POP_SLOTS {
+        let base = LATENT_POP_D + i * 3;
+        let contrib_a = sample_allele(al[base], al[base + 1], al[base + 2], rr[7]);
+        let contrib_b = sample_allele(bl[base], bl[base + 1], bl[base + 2], rr[15]);
+        let swap_bit = (rr[23] >> 7) & 1;
+        let (child_d, child_r1) = if swap_bit == 0 {
+            (contrib_a, contrib_b)
+        } else {
+            (contrib_b, contrib_a)
+        };
+        let pool = [al[base + 2], al[base + 2], bl[base + 2], bl[base + 2]];
+        let child_r2 = pool[(rr[31] & 0x03) as usize];
+        let mut final_d = child_d;
+        if (rr[23] & 0x3F) < 1 {
+            final_d ^= rr[15];
+        }
+        out_latent[base] = final_d;
+        out_latent[base + 1] = child_r1;
+        out_latent[base + 2] = child_r2;
+    }
+
     // Lineage signature (unchanged from the legacy crossover).
     for i in 0..4 {
         out_dna[IDX_PARENT_MIX + i] = aa[i] ^ bb[i];
@@ -210,10 +267,12 @@ pub fn crossover_with_latent(
     let affinity = if (rr[25] & 1) == 0 { aff_a } else { aff_b };
     out_dna[IDX_AFFINITY_RARITY] = affinity | (rarity & 0x0F);
 
-    // Unique salt: stir rand into bytes 18..32 + XOR child token id.
+    // Unique salt: stir rand into bytes 18..32 + XOR child token id. The
+    // latent's trait slots and population trio already carry their own
+    // token_id stir from the per-byte writes above, so no separate latent
+    // stir is needed here.
     out_dna[IDX_RESERVED..DNA_LEN].copy_from_slice(&rr[IDX_RESERVED..DNA_LEN]);
     mix_token_id_into_salt(&mut out_dna, token_id);
-    mix_token_id_into_latent(&mut out_latent, token_id);
 
     (
         BytesN::from_array(env, &out_dna),
@@ -247,13 +306,6 @@ fn mix_token_id_into_salt(out: &mut [u8; DNA_LEN], token_id: u32) {
     out[IDX_RESERVED + 3] ^= id[3];
 }
 
-/// Same idea for the latent blob — XOR token id into a reserved tail so
-/// siblings get distinct latents.
-fn mix_token_id_into_latent(out: &mut [u8; LATENT_LEN], token_id: u32) {
-    let id = token_id.to_le_bytes();
-    // Write into the reserved (16..32) region so trait slots stay intact.
-    out[16] ^= id[0];
-    out[17] ^= id[1];
-    out[18] ^= id[2];
-    out[19] ^= id[3];
-}
+// (mix_token_id_into_latent removed — every byte the helper touched is now
+// either stirred in-place by the per-byte writes above, or sits in the
+// still-reserved tail that nothing reads.)

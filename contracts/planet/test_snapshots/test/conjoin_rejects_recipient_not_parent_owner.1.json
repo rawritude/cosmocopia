@@ -204,6 +204,60 @@
               "key": {
                 "vec": [
                   {
+                    "symbol": "CivTier"
+                  },
+                  {
+                    "u32": 0
+                  }
+                ]
+              },
+              "durability": "persistent",
+              "val": {
+                "u32": 0
+              }
+            }
+          },
+          "ext": "v0"
+        },
+        "live_until": 518408
+      },
+      {
+        "entry": {
+          "last_modified_ledger_seq": 0,
+          "data": {
+            "contract_data": {
+              "ext": "v0",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
+              "key": {
+                "vec": [
+                  {
+                    "symbol": "CivTier"
+                  },
+                  {
+                    "u32": 1
+                  }
+                ]
+              },
+              "durability": "persistent",
+              "val": {
+                "u32": 0
+              }
+            }
+          },
+          "ext": "v0"
+        },
+        "live_until": 518416
+      },
+      {
+        "entry": {
+          "last_modified_ledger_seq": 0,
+          "data": {
+            "contract_data": {
+              "ext": "v0",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
+              "key": {
+                "vec": [
+                  {
                     "symbol": "Coords"
                   },
                   {
@@ -443,7 +497,7 @@
               },
               "durability": "persistent",
               "val": {
-                "bytes": "cccccccccccccccccccccccccccccccc00000000000000000000000000000000"
+                "bytes": "cccccccccccccccccccccccccccccccccccccc00000000000000000000000000"
               }
             }
           },
@@ -470,7 +524,7 @@
               },
               "durability": "persistent",
               "val": {
-                "bytes": "cdcccccccdcccccccccccccdcccccccd01000000000000000000000000000000"
+                "bytes": "cdcccccccdcccccccccccccdcccccccdcdcccc00000000000000000000000000"
               }
             }
           },

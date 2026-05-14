@@ -1,7 +1,7 @@
 {
   "generators": {
-    "address": 5,
-    "nonce": 1,
+    "address": 4,
+    "nonce": 0,
     "mux_id": 0
   },
   "auth": [
@@ -104,7 +104,7 @@
                               "symbol": "value"
                             },
                             "val": {
-                              "bytes": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+                              "bytes": "3333333333333333333333333333333333333333333333333333333333333333"
                             }
                           }
                         ]
@@ -139,33 +139,6 @@
               "durability": "persistent",
               "val": {
                 "u32": 1
-              }
-            }
-          },
-          "ext": "v0"
-        },
-        "live_until": 518408
-      },
-      {
-        "entry": {
-          "last_modified_ledger_seq": 0,
-          "data": {
-            "contract_data": {
-              "ext": "v0",
-              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
-              "key": {
-                "vec": [
-                  {
-                    "symbol": "CivTier"
-                  },
-                  {
-                    "u32": 0
-                  }
-                ]
-              },
-              "durability": "persistent",
-              "val": {
-                "u32": 0
               }
             }
           },
@@ -226,7 +199,7 @@
               },
               "durability": "persistent",
               "val": {
-                "bytes": "a1a1a1a1a1a1a1a1000000000000006e00a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+                "bytes": "3333333333333333000000000000006e00333333333333333333333333333333"
               }
             }
           },
@@ -307,7 +280,7 @@
               },
               "durability": "persistent",
               "val": {
-                "bytes": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a100000000000000000000000000"
+                "bytes": "3333333333333333333333333333333333333300000000000000000000000000"
               }
             }
           },
@@ -621,29 +594,6 @@
           "ext": "v0"
         },
         "live_until": 518400
-      },
-      {
-        "entry": {
-          "last_modified_ledger_seq": 0,
-          "data": {
-            "contract_data": {
-              "ext": "v0",
-              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM",
-              "key": "ledger_key_contract_instance",
-              "durability": "persistent",
-              "val": {
-                "contract_instance": {
-                  "executable": {
-                    "wasm": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-                  },
-                  "storage": null
-                }
-              }
-            }
-          },
-          "ext": "v0"
-        },
-        "live_until": 4103
       },
       {
         "entry": {

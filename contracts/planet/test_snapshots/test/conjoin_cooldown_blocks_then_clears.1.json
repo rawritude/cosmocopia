@@ -311,6 +311,141 @@
               "key": {
                 "vec": [
                   {
+                    "symbol": "CivTier"
+                  },
+                  {
+                    "u32": 0
+                  }
+                ]
+              },
+              "durability": "persistent",
+              "val": {
+                "u32": 0
+              }
+            }
+          },
+          "ext": "v0"
+        },
+        "live_until": 518408
+      },
+      {
+        "entry": {
+          "last_modified_ledger_seq": 0,
+          "data": {
+            "contract_data": {
+              "ext": "v0",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
+              "key": {
+                "vec": [
+                  {
+                    "symbol": "CivTier"
+                  },
+                  {
+                    "u32": 1
+                  }
+                ]
+              },
+              "durability": "persistent",
+              "val": {
+                "u32": 0
+              }
+            }
+          },
+          "ext": "v0"
+        },
+        "live_until": 518416
+      },
+      {
+        "entry": {
+          "last_modified_ledger_seq": 0,
+          "data": {
+            "contract_data": {
+              "ext": "v0",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
+              "key": {
+                "vec": [
+                  {
+                    "symbol": "CivTier"
+                  },
+                  {
+                    "u32": 2
+                  }
+                ]
+              },
+              "durability": "persistent",
+              "val": {
+                "u32": 0
+              }
+            }
+          },
+          "ext": "v0"
+        },
+        "live_until": 518424
+      },
+      {
+        "entry": {
+          "last_modified_ledger_seq": 0,
+          "data": {
+            "contract_data": {
+              "ext": "v0",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
+              "key": {
+                "vec": [
+                  {
+                    "symbol": "CivTier"
+                  },
+                  {
+                    "u32": 3
+                  }
+                ]
+              },
+              "durability": "persistent",
+              "val": {
+                "u32": 0
+              }
+            }
+          },
+          "ext": "v0"
+        },
+        "live_until": 518432
+      },
+      {
+        "entry": {
+          "last_modified_ledger_seq": 0,
+          "data": {
+            "contract_data": {
+              "ext": "v0",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
+              "key": {
+                "vec": [
+                  {
+                    "symbol": "CivTier"
+                  },
+                  {
+                    "u32": 4
+                  }
+                ]
+              },
+              "durability": "persistent",
+              "val": {
+                "u32": 0
+              }
+            }
+          },
+          "ext": "v0"
+        },
+        "live_until": 519240
+      },
+      {
+        "entry": {
+          "last_modified_ledger_seq": 0,
+          "data": {
+            "contract_data": {
+              "ext": "v0",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
+              "key": {
+                "vec": [
+                  {
                     "symbol": "Coords"
                   },
                   {
@@ -976,7 +1111,7 @@
               },
               "durability": "persistent",
               "val": {
-                "bytes": "3333333333333333333333333333333300000000000000000000000000000000"
+                "bytes": "3333333333333333333333333333333333333300000000000000000000000000"
               }
             }
           },
@@ -1003,7 +1138,7 @@
               },
               "durability": "persistent",
               "val": {
-                "bytes": "3233333332333333333333323333333201000000000000000000000000000000"
+                "bytes": "3233333332333333333333323333333232333300000000000000000000000000"
               }
             }
           },
@@ -1030,7 +1165,7 @@
               },
               "durability": "persistent",
               "val": {
-                "bytes": "3133333331333333333333313333333102000000000000000000000000000000"
+                "bytes": "3133333331333333333333313333333131333300000000000000000000000000"
               }
             }
           },
@@ -1057,7 +1192,7 @@
               },
               "durability": "persistent",
               "val": {
-                "bytes": "3333333333333333333333323333333203000000000000000000000000000000"
+                "bytes": "3333333333333333333333323333333233323300000000000000000000000000"
               }
             }
           },
@@ -1084,7 +1219,7 @@
               },
               "durability": "persistent",
               "val": {
-                "bytes": "3333333333333333333333313333333104000000000000000000000000000000"
+                "bytes": "3333333333333333333333313333333133313300000000000000000000000000"
               }
             }
           },
@@ -2276,6 +2411,38 @@
                   },
                   "val": {
                     "u32": 2
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
+        "type_": "contract",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "pop"
+              },
+              {
+                "u32": 4
+              }
+            ],
+            "data": {
+              "map": [
+                {
+                  "key": {
+                    "symbol": "population"
+                  },
+                  "val": {
+                    "u32": 3
                   }
                 }
               ]

@@ -894,6 +894,201 @@ fn audit_m3_legacy_parent_contributes_visible_d_not_zero() {
     );
 }
 
+// ---------- Population gene + civ_tier (game-audit F15) ----------
+
+#[test]
+fn genesis_writes_population_byte() {
+    // Seed [0xAA; 32], token_id 0 → latent[16] = seed[24] ^ id[0] = 0xAA.
+    // 0xAA % 6 = 170 % 6 = 2 (Avian per scene.ts).
+    let f = setup(0xAA);
+    let user = Address::generate(&f.env);
+    let id = mint_genesis(&f, &user, 0, 0);
+
+    let pop = f.planet.population_of(&id);
+    assert_eq!(pop, 2, "population should be 0xAA % 6 = 2");
+    assert_ne!(pop, 0, "population must not silently fall back to zero");
+
+    // Sanity-check the underlying byte too so future seed-byte changes don't
+    // accidentally re-zero the gene.
+    let latent = f.planet.latent_of(&id).to_array();
+    assert_eq!(latent[dna::LATENT_POP_D], 0xAA);
+}
+
+#[test]
+fn population_propagates_through_conjoin() {
+    // Two parents with distinct population D values must produce a child
+    // whose population D is drawn from one of the parents' (D, R1, R2).
+    let env = Env::default();
+    let mut dna_a = [0u8; 32];
+    let mut dna_b = [0u8; 32];
+    // Distinct trait bytes so DNA isn't byte-identical.
+    dna_a[0] = 0x11;
+    dna_b[0] = 0x22;
+    let dna_a = BytesN::from_array(&env, &dna_a);
+    let dna_b = BytesN::from_array(&env, &dna_b);
+
+    // Parent A pop: D=0xAA, R1=0xBB, R2=0xCC. Parent B pop: D=0xDD, R1=0xEE, R2=0xFE.
+    let mut lat_a = [0u8; 32];
+    lat_a[dna::LATENT_POP_D] = 0xAA;
+    lat_a[dna::LATENT_POP_R1] = 0xBB;
+    lat_a[dna::LATENT_POP_R2] = 0xCC;
+    let lat_a = BytesN::from_array(&env, &lat_a);
+    let mut lat_b = [0u8; 32];
+    lat_b[dna::LATENT_POP_D] = 0xDD;
+    lat_b[dna::LATENT_POP_R1] = 0xEE;
+    lat_b[dna::LATENT_POP_R2] = 0xFE;
+    let lat_b = BytesN::from_array(&env, &lat_b);
+
+    // Force rr[23] low6 = 60 → no mutation. Vary swap_bit + roll for coverage.
+    let mut rb = [0u8; 32];
+    rb[7] = 100; // parent A pop allele: D (< 179)
+    rb[15] = 100; // parent B pop allele: D (< 179)
+    rb[23] = 0x3C; // swap_bit = 0, mutation gate fails
+    rb[31] = 0; // pool[0] = al[pop_r2] = 0xCC
+    let rand = BytesN::from_array(&env, &rb);
+
+    let (_, child_latent) =
+        dna::crossover_with_latent(&env, &dna_a, &lat_a, &dna_b, &lat_b, &rand, 0, 99);
+    let child_pop_d = child_latent.to_array()[dna::LATENT_POP_D];
+
+    // With both rolls < 179 and swap_bit=0: contrib_a = A.D = 0xAA → child_d.
+    // (mix_token_id_into_latent only touches byte 19, so 0xAA passes through.)
+    assert_eq!(
+        child_pop_d, 0xAA,
+        "child D should equal contrib_a (parent A's D)"
+    );
+    // Confirm the child latent's pop D is one of the parents' (D, R1, R2).
+    let pool = [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFEu8];
+    assert!(
+        pool.contains(&child_pop_d),
+        "child pop D ({:#04x}) should descend from a parent allele",
+        child_pop_d
+    );
+}
+
+#[test]
+fn civ_tier_starts_at_zero_for_genesis() {
+    let f = setup(0x10);
+    let user = Address::generate(&f.env);
+    let id = mint_genesis(&f, &user, 0, 0);
+    assert_eq!(f.planet.civ_tier_of(&id), 0);
+}
+
+#[test]
+fn civ_tier_ratchets_up_on_care() {
+    // Bloom (class 10): civ_signal = 0.6*biomass + 0.25*spirit + 0.15*temp.
+    // Initial vitals are 128/128/128/128/160 (spirit). Civ signal starts at
+    // ~0.6*128 + 0.25*160 + 0.15*128 = 76.8 + 40 + 19.2 = 136 → tier 2.
+    // After many Tend calls biomass should saturate at 255, lifting signal
+    // above 204 → tier 4.
+    //
+    // Class 10 = Bloom needs seed_byte high nibble = 0xA. Use 0xA0.
+    let f = setup(0xA0);
+    let user = Address::generate(&f.env);
+    let id = mint_genesis(&f, &user, 0, 0);
+    let dna = f.planet.dna_of(&id).to_array();
+    assert_eq!(dna[dna::IDX_CLASS] >> 4, 10, "fixture must be Bloom");
+
+    // Tend until biomass saturates.
+    for _ in 0..30 {
+        f.planet.care(&id, &(stats::Care::Tend as u32));
+        // Tick the ledger between calls so each care call writes a fresh
+        // last_ledger and decay never undoes our gains.
+        let now = f.env.ledger().sequence();
+        f.env.ledger().set_sequence_number(now + 1);
+    }
+    let tier = f.planet.civ_tier_of(&id);
+    assert_eq!(tier, 4, "biomass-saturated Bloom should reach tier 4");
+}
+
+#[test]
+fn civ_tier_class_aware_hollow_thrives_on_low_biomass() {
+    // Hollow (class 14): civ_signal = 0.5*(255-biomass) + 0.25*(255-temp) + 0.25*spirit.
+    // At the fresh genesis vitals (biomass=128, temp=128, spirit=160):
+    //   0.5*(255-128) + 0.25*(255-128) + 0.25*160
+    //   = 0.5*127 + 0.25*127 + 0.25*160
+    //   = 63 + 31 + 40 = 134 → tier 2 (just under tier 3 at 153).
+    // After drops in biomass and temp the signal climbs.
+    //
+    // Class 14 = Hollow → seed byte 0xE0.
+    let f = setup(0xE0);
+    let user = Address::generate(&f.env);
+    let id = mint_genesis(&f, &user, 0, 0);
+    let dna = f.planet.dna_of(&id).to_array();
+    assert_eq!(dna[dna::IDX_CLASS] >> 4, 14, "fixture must be Hollow");
+
+    // Drop biomass + temp via Hollow's natural decay: advance the ledger so
+    // many decay periods land. Hollow drift is (-1, -1, -2, -1, -1) per period.
+    let now = f.env.ledger().sequence();
+    f.env
+        .ledger()
+        .set_sequence_number(now + stats::DECAY_PERIOD_LEDGERS * 200);
+
+    // Calling care(Reflect) only nudges spirit, leaving biomass/temp where
+    // decay drove them. Hollow's Reflect default branch is (0,0,0,0,15) so
+    // spirit ratchets up too, helping the signal cross thresholds.
+    f.planet.care(&id, &(stats::Care::Reflect as u32));
+    let tier = f.planet.civ_tier_of(&id);
+    assert!(
+        tier >= 3,
+        "Hollow with decayed biomass should ratchet above tier 2 (got {})",
+        tier
+    );
+
+    // Inverse: a Hollow at peak biomass should NOT progress past tier 0.
+    // Mint a fresh Hollow, push biomass up via Tend (only class default
+    // bumps biomass +15), and check civ_tier stays low.
+    let id2 = mint_genesis(&f, &user, 4, 4);
+    // Sanity: both planets are Hollow.
+    let dna2 = f.planet.dna_of(&id2).to_array();
+    assert_eq!(dna2[dna::IDX_CLASS] >> 4, 14);
+    // Hollow's Tend branch: (0, 0, 0, 5, -5). So biomass climbs by 5/call.
+    for _ in 0..20 {
+        f.planet.care(&id2, &(stats::Care::Tend as u32));
+        let now = f.env.ledger().sequence();
+        f.env.ledger().set_sequence_number(now + 1);
+    }
+    let v2 = f.planet.vitals_of(&id2);
+    assert!(
+        v2.biomass > 200,
+        "Hollow biomass should be high (got {})",
+        v2.biomass
+    );
+    let tier2 = f.planet.civ_tier_of(&id2);
+    // High biomass *inverts* in Hollow's signal: 0.5*(255-228)=13, plus
+    // 0.25*(255-temp) and 0.25*spirit. Should stay well below tier 4.
+    assert!(
+        tier2 < 4,
+        "Hollow with high biomass should NOT reach tier 4 (got {})",
+        tier2
+    );
+}
+
+#[test]
+fn civ_tier_view_falls_back_to_zero_for_legacy_planets() {
+    // Pre-civ-tier planets have no CivTier(id) storage slot. The view must
+    // return 0 instead of erroring.
+    let f = setup(0x33);
+    let user = Address::generate(&f.env);
+    let id = mint_genesis(&f, &user, 0, 0);
+
+    // Strip the CivTier slot to simulate a legacy planet.
+    f.env.as_contract(&f.planet.address, || {
+        f.env
+            .storage()
+            .persistent()
+            .remove(&crate::DataKey::CivTier(id));
+    });
+    assert_eq!(f.planet.civ_tier_of(&id), 0);
+}
+
+#[test]
+fn population_of_unknown_planet_errors() {
+    let f = setup(0x44);
+    let err = f.planet.try_population_of(&777u32).err().unwrap().unwrap();
+    assert_eq!(err, Error::UnknownPlanet);
+}
+
 #[test]
 fn audit_m4_allele_weights_doc_matches_implementation() {
     // Verify the documented thresholds 179 and 235 produce the documented
@@ -947,4 +1142,52 @@ fn audit_m4_allele_weights_doc_matches_implementation() {
     check(&env, 179, 0xBB, &dna_a, &lat_a, &dna_b, &zero); // at 179 → R1
     check(&env, 234, 0xBB, &dna_a, &lat_a, &dna_b, &zero); // just under 235 → R1
     check(&env, 235, 0xCC, &dna_a, &lat_a, &dna_b, &zero); // at 235 → R2
+}
+
+// ---------- Audit follow-up: M-2 (legacy parent population synthesis) ----------
+
+#[test]
+fn legacy_parent_contributes_visible_population_not_zero() {
+    // Audit M-2 (parallel to the M-3 fix for trait slots): a legacy parent
+    // with no stored latent must not inject pop = 0 into descendants. The
+    // breeding synthesis seeds latent[16/17/18] from visible DNA byte 18
+    // so `sample_allele` returns the parent's visible population 100% of
+    // the time. We exercise this through the full reveal_conjoin path
+    // because read_latent_for_breeding is the contract-level glue.
+    let f = setup(0x77);
+    let user = Address::generate(&f.env);
+
+    // Mint two planets seeded by the [0x77; 32] mock seed.
+    let a = mint_genesis(&f, &user, 0, 0);
+    let b = mint_genesis(&f, &user, 5, 5);
+
+    // Strip parent A's stored latent to simulate a pre-dominance planet.
+    f.env.as_contract(&f.planet.address, || {
+        f.env
+            .storage()
+            .persistent()
+            .remove(&crate::DataKey::Latent(a));
+    });
+
+    let child = conjoin(&f, a, b, &user);
+
+    // Both parents' visible DNA byte 18 was seeded from the mock seed +
+    // token-id stir. With the M-2 fix, the legacy parent contributes its
+    // visible population for 100% of its samples instead of injecting 0.
+    // The exact resulting pop is deterministic from the test seed but the
+    // invariant we pin is: it's NOT 0 (which would be the zero-injection
+    // failure mode).
+    let child_pop = f.planet.population_of(&child);
+    let parent_a_dna = f.planet.dna_of(&a).to_array();
+    let parent_a_visible_pop = parent_a_dna[crate::dna::IDX_RESERVED] % 6;
+    // The child either inherited the live parent B's pop or the legacy
+    // parent A's synthesized-from-visible pop. Both are valid; what's
+    // NOT valid is zero unless one of those happens to be zero too.
+    if parent_a_visible_pop != 0 {
+        assert_ne!(
+            child_pop, 0,
+            "legacy parent must contribute visible pop {:?}, not Humanoid via zero-injection",
+            parent_a_visible_pop
+        );
+    }
 }
