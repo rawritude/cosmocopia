@@ -50,6 +50,13 @@ struct Fixture {
     env: Env,
     drand_id: Address,
     planet: PlanetContractClient<'static>,
+    /// Native XLM SAC under test (host-registered Stellar Asset Contract).
+    native_sac: Address,
+    /// Burn / sink address configured at construction.
+    burn: Address,
+    /// Admin address used in `setup` so tests that exercise admin paths can
+    /// re-mint XLM to top up keeper balances etc.
+    sac_admin: Address,
 }
 
 fn setup(seed_byte: u8) -> Fixture {
@@ -63,6 +70,14 @@ fn setup(seed_byte: u8) -> Fixture {
     let seed = BytesN::from_array(&env, &[seed_byte; 32]);
     drand_client.set_latest(&1u64, &seed);
 
+    // Register a native-XLM SAC under a controllable admin so tests can mint
+    // tokens to keeper addresses. `register_stellar_asset_contract_v2`
+    // returns both the SAC address and an issuer-admin handle.
+    let sac_admin = Address::generate(&env);
+    let sac = env.register_stellar_asset_contract_v2(sac_admin.clone());
+    let native_sac = sac.address();
+    let burn = Address::generate(&env);
+
     let planet_id = env.register(
         PlanetContract,
         (
@@ -71,6 +86,8 @@ fn setup(seed_byte: u8) -> Fixture {
             String::from_str(&env, "ipfs://meta/"),
             String::from_str(&env, "Cosmocopia"),
             String::from_str(&env, "PLN"),
+            native_sac.clone(),
+            burn.clone(),
         ),
     );
     let planet = PlanetContractClient::new(&env, &planet_id);
@@ -79,7 +96,25 @@ fn setup(seed_byte: u8) -> Fixture {
         env,
         drand_id,
         planet,
+        native_sac,
+        burn,
+        sac_admin,
     }
+}
+
+/// Mint `amount` stroops of the test native XLM SAC to `to`. The SAC's admin
+/// (`sac_admin` from `setup`) is the only address that can call `mint`.
+fn mint_xlm(f: &Fixture, to: &Address, amount: i128) {
+    let admin_client = soroban_sdk::token::StellarAssetClient::new(&f.env, &f.native_sac);
+    // `mock_all_auths` is active in `setup`; admin auth is mocked too.
+    admin_client.mint(to, &amount);
+    // Sanity: dont let an unused warning fire if we ever stop using sac_admin.
+    let _ = &f.sac_admin;
+}
+
+/// Balance helper.
+fn xlm_balance(f: &Fixture, who: &Address) -> i128 {
+    soroban_sdk::token::TokenClient::new(&f.env, &f.native_sac).balance(who)
 }
 
 fn set_drand(env: &Env, drand_id: &Address, round: u64, byte: u8) {
@@ -329,6 +364,11 @@ fn raw_setup() -> Fixture {
     let drand_client = MockDrandClient::new(&env, &drand_id);
     drand_client.set_latest(&1u64, &BytesN::from_array(&env, &[0x99u8; 32]));
 
+    let sac_admin = Address::generate(&env);
+    let sac = env.register_stellar_asset_contract_v2(sac_admin.clone());
+    let native_sac = sac.address();
+    let burn = Address::generate(&env);
+
     let planet_id = env.register(
         PlanetContract,
         (
@@ -337,6 +377,8 @@ fn raw_setup() -> Fixture {
             String::from_str(&env, "ipfs://meta/"),
             String::from_str(&env, "Cosmocopia"),
             String::from_str(&env, "PLN"),
+            native_sac.clone(),
+            burn.clone(),
         ),
     );
     let planet = PlanetContractClient::new(&env, &planet_id);
@@ -346,6 +388,9 @@ fn raw_setup() -> Fixture {
         env,
         drand_id,
         planet,
+        native_sac,
+        burn,
+        sac_admin,
     }
 }
 
@@ -1190,4 +1235,288 @@ fn legacy_parent_contributes_visible_population_not_zero() {
             parent_a_visible_pop
         );
     }
+}
+
+// ============================================================================
+//  First Light + soulbound (Phase 1 onboarding)
+// ============================================================================
+
+/// Helper: end-to-end claim+reveal for First Light. Mints enough XLM to the
+/// keeper, calls `claim_first_light`, advances the ledger past the reveal
+/// delay, calls `reveal_first_light`, returns the new token id.
+fn claim_first_light(f: &Fixture, keeper: &Address) -> u32 {
+    mint_xlm(f, keeper, crate::FIRST_LIGHT_FEE_STROOPS);
+    let commitment_id = f.planet.claim_first_light(keeper, &100u64);
+    let now = f.env.ledger().sequence();
+    f.env
+        .ledger()
+        .set_sequence_number(now + crate::MIN_REVEAL_DELAY_LEDGERS);
+    f.planet.reveal_first_light(&commitment_id)
+}
+
+#[test]
+fn claim_first_light_charges_10_xlm() {
+    let f = setup(0xA1);
+    let keeper = Address::generate(&f.env);
+    mint_xlm(&f, &keeper, crate::FIRST_LIGHT_FEE_STROOPS);
+    assert_eq!(xlm_balance(&f, &keeper), crate::FIRST_LIGHT_FEE_STROOPS);
+
+    let _cid = f.planet.claim_first_light(&keeper, &100u64);
+    // 5 XLM to burn, 5 XLM to the contract's pool. Keeper balance = 0.
+    assert_eq!(xlm_balance(&f, &keeper), 0);
+    assert_eq!(xlm_balance(&f, &f.burn), crate::FIRST_LIGHT_BURN_STROOPS);
+    assert_eq!(
+        xlm_balance(&f, &f.planet.address),
+        crate::FIRST_LIGHT_POOL_STROOPS
+    );
+    assert_eq!(
+        f.planet.distribution_pool(),
+        crate::FIRST_LIGHT_POOL_STROOPS
+    );
+}
+
+#[test]
+fn claim_first_light_one_shot_per_address() {
+    let f = setup(0xA2);
+    let keeper = Address::generate(&f.env);
+    let _ = claim_first_light(&f, &keeper);
+    // Second claim attempt by the same keeper: even pre-fee gate fires.
+    // We still mint XLM so the auth gate doesn't fire ambiguously.
+    mint_xlm(&f, &keeper, crate::FIRST_LIGHT_FEE_STROOPS);
+    let err = f
+        .planet
+        .try_claim_first_light(&keeper, &200u64)
+        .err()
+        .unwrap()
+        .unwrap();
+    assert_eq!(err, Error::FirstLightAlreadyClaimed);
+}
+
+#[test]
+fn first_light_coord_in_outer_dark() {
+    let f = setup(0xA3);
+    let keeper = Address::generate(&f.env);
+    let id = claim_first_light(&f, &keeper);
+    let (x, y) = f.planet.coords_of(&id);
+    assert_eq!(
+        galaxy::sector_of(x, y),
+        galaxy::SECTOR_OUTER_DARK,
+        "First Light coord ({}, {}) must land in Outer Dark",
+        x,
+        y
+    );
+}
+
+#[test]
+fn first_light_coord_unique() {
+    let f = setup(0xA4);
+    let k1 = Address::generate(&f.env);
+    let k2 = Address::generate(&f.env);
+    let id1 = claim_first_light(&f, &k1);
+    let id2 = claim_first_light(&f, &k2);
+    let xy1 = f.planet.coords_of(&id1);
+    let xy2 = f.planet.coords_of(&id2);
+    assert_ne!(
+        xy1, xy2,
+        "two different keepers must end up at distinct coords"
+    );
+}
+
+#[test]
+fn first_light_tier_capped_at_common() {
+    // For 8 different seeds, the contract's clamped DNA byte 17's rarity
+    // nibble must stay <= FIRST_LIGHT_RARITY_CAP, and the class must never
+    // be one of the mythic indices (14 / 15).
+    for seed in [0x11u8, 0x33, 0x55, 0x77, 0x99, 0xBB, 0xDD, 0xFF] {
+        let f = setup(seed);
+        let keeper = Address::generate(&f.env);
+        let id = claim_first_light(&f, &keeper);
+        let dna = f.planet.dna_of(&id).to_array();
+        let rarity = dna[dna::IDX_AFFINITY_RARITY] & 0x0F;
+        assert!(
+            rarity <= crate::FIRST_LIGHT_RARITY_CAP,
+            "rarity nibble {} exceeded Common cap {} for seed {:#x}",
+            rarity,
+            crate::FIRST_LIGHT_RARITY_CAP,
+            seed,
+        );
+        let class_idx = (dna[dna::IDX_CLASS] >> 4) & 0x0F;
+        for m in crate::FIRST_LIGHT_MYTHIC_CLASS_IDS.iter() {
+            assert_ne!(
+                class_idx, *m,
+                "First Light class {} hit a mythic id for seed {:#x}",
+                class_idx, seed
+            );
+        }
+    }
+}
+
+#[test]
+fn soulbound_blocks_transfer() {
+    let f = setup(0xB1);
+    let keeper = Address::generate(&f.env);
+    let id = claim_first_light(&f, &keeper);
+    assert!(f.planet.is_soulbound_of(&id));
+
+    let recipient = Address::generate(&f.env);
+    let result = f.planet.try_transfer(&keeper, &recipient, &id);
+    assert!(result.is_err(), "transfer of a soulbound token must error");
+}
+
+#[test]
+fn soulbound_blocks_conjoin() {
+    let f = setup(0xB2);
+    let keeper = Address::generate(&f.env);
+    // First Light planet (soulbound) + a regular genesis planet owned by
+    // the same keeper. Conjoin should reject because parent A is locked.
+    let soulbound = claim_first_light(&f, &keeper);
+    set_drand(&f.env, &f.drand_id, 200, 0x22);
+    let regular = mint_genesis(&f, &keeper, 5, 5);
+
+    let err = f
+        .planet
+        .try_commit_conjoin(&soulbound, &regular, &keeper, &300u64)
+        .err()
+        .unwrap()
+        .unwrap();
+    assert_eq!(err, Error::SoulboundLocked);
+}
+
+#[test]
+fn soulbound_releases_after_7d_consistent_care() {
+    // "Consistent care" semantics: the keeper has kept the planet in band
+    // every time `care` ran. We simulate that by writing fresh mid-band
+    // vitals into storage with `last_ledger = now`, then advancing the
+    // ledger by SOULBOUND_RELEASE_LEDGERS so the elapsed window crosses
+    // the release threshold. The next care call sees in-band vitals and
+    // a HealthySince older than the window → clears the flag.
+    let f = setup(0xB3);
+    let keeper = Address::generate(&f.env);
+    let id = claim_first_light(&f, &keeper);
+
+    let initial_since = f.planet.healthy_since_of(&id);
+    assert!(initial_since > 0);
+
+    // Fast-forward past the release window, then refresh vitals to the
+    // initial mid-band shape with the new `last_ledger`. This is what an
+    // actively-cared-for planet looks like just before its threshold tick.
+    let now = f.env.ledger().sequence();
+    let later = now + crate::SOULBOUND_RELEASE_LEDGERS + 1;
+    f.env.ledger().set_sequence_number(later);
+    f.env.as_contract(&f.planet.address, || {
+        f.env.storage().persistent().set(
+            &crate::DataKey::Vitals(id),
+            &crate::stats::Vitals {
+                temperature: 128,
+                hydration: 128,
+                gravity: 128,
+                biomass: 128,
+                spirit: 160,
+                last_ledger: later,
+            },
+        );
+    });
+
+    // `Reflect` only nudges spirit (+15 on most branches), so post-call
+    // vitals stay comfortably in the [40, 220] band.
+    f.planet.care(&id, &(stats::Care::Reflect as u32));
+
+    assert!(
+        !f.planet.is_soulbound_of(&id),
+        "after 7d of healthy care the soulbound flag should clear"
+    );
+}
+
+#[test]
+fn soulbound_resets_on_unhealthy() {
+    // If vitals drop out of band the HealthySince timer resets to 0 — the
+    // next healthy care call starts a fresh streak from `now`, NOT from the
+    // initial value.
+    let f = setup(0xB4);
+    let keeper = Address::generate(&f.env);
+    let id = claim_first_light(&f, &keeper);
+    let initial_since = f.planet.healthy_since_of(&id);
+    assert!(initial_since > 0, "HealthySince must be set at reveal");
+
+    // Tank the planet's vitals by setting them all to 5 directly. Avoid
+    // going through `care` because we want a non-care path to verify
+    // care still resets the streak on the way back up.
+    f.env.as_contract(&f.planet.address, || {
+        f.env.storage().persistent().set(
+            &crate::DataKey::Vitals(id),
+            &crate::stats::Vitals {
+                temperature: 5,
+                hydration: 5,
+                gravity: 5,
+                biomass: 5,
+                spirit: 5,
+                last_ledger: f.env.ledger().sequence(),
+            },
+        );
+    });
+
+    // Trigger a care call — `Reflect` only nudges spirit (+15 on the default
+    // branch), so post-call all five vitals are still well out of band.
+    f.planet.care(&id, &(stats::Care::Reflect as u32));
+    assert_eq!(
+        f.planet.healthy_since_of(&id),
+        0,
+        "unhealthy care must reset HealthySince to 0"
+    );
+}
+
+#[test]
+fn burn_5_xlm_distribution_5_xlm() {
+    let f = setup(0xC1);
+    let keeper = Address::generate(&f.env);
+    mint_xlm(&f, &keeper, crate::FIRST_LIGHT_FEE_STROOPS);
+    let _cid = f.planet.claim_first_light(&keeper, &100u64);
+
+    // Exact-split assertions: 5 XLM (= FIRST_LIGHT_BURN_STROOPS) to burn,
+    // 5 XLM (= FIRST_LIGHT_POOL_STROOPS) to the contract's distribution
+    // pool. Tracks the pool both via the explicit storage view and via
+    // the contract's actual on-chain XLM balance.
+    assert_eq!(xlm_balance(&f, &f.burn), crate::FIRST_LIGHT_BURN_STROOPS);
+    assert_eq!(
+        xlm_balance(&f, &f.planet.address),
+        crate::FIRST_LIGHT_POOL_STROOPS
+    );
+    assert_eq!(
+        f.planet.distribution_pool(),
+        crate::FIRST_LIGHT_POOL_STROOPS
+    );
+}
+
+#[test]
+fn first_light_views_round_trip() {
+    let f = setup(0xC2);
+    let keeper = Address::generate(&f.env);
+    // Pre-claim: views return default-y / empty values.
+    assert!(!f.planet.first_light_claimed(&keeper));
+    assert_eq!(f.planet.distribution_pool(), 0);
+    assert_eq!(f.planet.burn_address(), f.burn);
+    assert_eq!(f.planet.native_token(), f.native_sac);
+
+    let id = claim_first_light(&f, &keeper);
+    assert!(f.planet.first_light_claimed(&keeper));
+    assert!(f.planet.is_soulbound_of(&id));
+    assert!(f.planet.healthy_since_of(&id) > 0);
+}
+
+#[test]
+fn set_burn_address_rotates() {
+    let f = setup(0xC3);
+    let new_burn = Address::generate(&f.env);
+    f.planet.set_burn_address(&new_burn);
+    assert_eq!(f.planet.burn_address(), new_burn);
+}
+
+#[test]
+fn set_native_token_rotates() {
+    let f = setup(0xC4);
+    let alt = f
+        .env
+        .register_stellar_asset_contract_v2(f.sac_admin.clone());
+    f.planet.set_native_token(&alt.address());
+    assert_eq!(f.planet.native_token(), alt.address());
 }

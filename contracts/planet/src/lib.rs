@@ -9,8 +9,8 @@ mod stats;
 mod test;
 
 use soroban_sdk::{
-    contract, contracterror, contractevent, contractimpl, contracttype, Address, BytesN, Env,
-    String,
+    contract, contracterror, contractevent, contractimpl, contracttype, token, Address, BytesN,
+    Env, String,
 };
 use stellar_tokens::non_fungible::{
     enumerable::{Enumerable, NonFungibleEnumerable},
@@ -40,6 +40,33 @@ pub enum DataKey {
     /// folded into the Vitals struct — so pre-civ-tier planets keep
     /// deserializing. Absent ⇒ tier 0 (Primitive).
     CivTier(u32),
+    /// Native XLM Stellar Asset Contract address. Used by `claim_first_light`
+    /// to charge the 10 XLM observation fee. Set in `__constructor`,
+    /// rotatable by the admin via `set_native_token`.
+    NativeToken,
+    /// Burn / sink address for the 5 XLM half of every First Light fee that
+    /// is destroyed. Set in `__constructor`, rotatable via
+    /// `set_burn_address`.
+    BurnAddress,
+    /// One-shot per address: true once an address has revealed a First Light
+    /// claim. `claim_first_light` rejects on subsequent calls.
+    FirstLightClaimed(Address),
+    /// Per-token soulbound flag. When true the token cannot be transferred
+    /// or used as a `conjoin` parent. Cleared by 7 days of healthy `care`
+    /// or (Phase 3) by a cross-owner conjunction reveal.
+    Soulbound(u32),
+    /// Ledger at which this token's vitals first entered the healthy band
+    /// `[40, 220]` (and have been there continuously since). 0 ⇒ not
+    /// currently healthy. Resets whenever any vital falls out of band.
+    HealthySince(u32),
+    /// Phase 4 accumulator: the 5 XLM half of every First Light fee that
+    /// isn't burned lands here so a future `claim_share` entrypoint can
+    /// distribute it. Stored as i128 to mirror SAC amounts.
+    DistributionPool,
+    /// Coord-uniqueness check for revealed First Light claims. Set to true
+    /// once any planet has been minted at exactly (x, y) by First Light.
+    /// Used to drive the retry-salt path in `reveal_first_light`.
+    FirstLightCoord(i32, i32),
 }
 
 #[contracterror]
@@ -59,6 +86,12 @@ pub enum Error {
     UnknownCommitment = 11,
     CommitmentNotReady = 12,
     InvalidCommitmentKind = 13,
+    /// First Light: the keeper has already claimed.
+    FirstLightAlreadyClaimed = 14,
+    /// Transfer / conjoin rejected because the token is soulbound.
+    SoulboundLocked = 15,
+    /// `reveal_first_light` exhausted the coord-collision retry budget.
+    FirstLightCoordCollision = 16,
 }
 
 /// Anti-grinding commit-reveal: two-step flow for mint_genesis and conjoin.
@@ -82,12 +115,14 @@ pub const LOOKAHEAD_ROUNDS: u64 = 10;
 pub const MIN_REVEAL_DELAY_LEDGERS: u32 = 8;
 
 /// Tuple variants are required by Soroban's #[contracttype] enum encoding.
-/// `Genesis(x, y)` and `Conjoin(parent_a, parent_b)`.
+/// `Genesis(x, y)` and `Conjoin(parent_a, parent_b)`. `FirstLight(keeper)`
+/// carries the keeper address so reveal can re-look-up the claim flag.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CommitmentKind {
     Genesis(i32, i32),
     Conjoin(u32, u32),
+    FirstLight(Address),
 }
 
 #[contracttype]
@@ -190,6 +225,30 @@ pub struct Committed {
     pub reveal_after_ledger: u32,
 }
 
+/// Emitted on a successful First Light reveal. Carries the assigned
+/// token id and the (x, y) coord the contract derived for the keeper. The
+/// commit half does NOT emit its own event — the generic `Committed` fires
+/// with `committer = keeper` and is enough for indexers to track pending
+/// First Light flows. Saves WASM bytes vs. a dedicated `FirstLightCommitted`.
+#[contractevent(topics = ["fl_claimed"])]
+pub struct FirstLightClaimedEvent {
+    #[topic]
+    pub keeper: Address,
+    pub id: u32,
+    pub x: i32,
+    pub y: i32,
+}
+
+/// Emitted whenever the soulbound flag is cleared on a token. `path` is a
+/// short label describing how it cleared — for Phase 1 the only path is
+/// `"care"` (7 days of healthy care).
+#[contractevent(topics = ["soulbound_release"])]
+pub struct SoulboundReleased {
+    #[topic]
+    pub id: u32,
+    pub path: soroban_sdk::Symbol,
+}
+
 #[contract]
 pub struct PlanetContract;
 
@@ -202,8 +261,45 @@ const TTL_EXTEND_TO: u32 = 518_400; // ~30 days
 const MIN_COOLDOWN: u32 = 30; // ~2.5 min
 const MAX_COOLDOWN: u32 = 30 * 17_280; // ~30 days
 
+/// First Light fee. 10 XLM in stroops (1 XLM = 1e7 stroops). Half is burned,
+/// half lands in `DistributionPool` for Phase 4 to consume.
+pub const FIRST_LIGHT_FEE_STROOPS: i128 = 10 * 10_000_000;
+pub const FIRST_LIGHT_BURN_STROOPS: i128 = 5 * 10_000_000;
+pub const FIRST_LIGHT_POOL_STROOPS: i128 = 5 * 10_000_000;
+
+/// Ledger window for soulbound auto-release via consistent care. 7 days at
+/// ~5 s/ledger → 7 * 86_400 / 5 = 120_960 ledgers.
+pub const SOULBOUND_RELEASE_LEDGERS: u32 = 120_960;
+
+/// Outer Dark sector threshold from `galaxy::sector_of`. The threshold is
+/// `r² >= 2500` (r >= 50). We pin a coord radius of 60 so derived coords
+/// land comfortably inside Outer Dark without hitting i32 boundaries.
+pub const FIRST_LIGHT_RING_RADIUS: i32 = 60;
+pub const FIRST_LIGHT_RING_R2: u64 =
+    (FIRST_LIGHT_RING_RADIUS as u64) * (FIRST_LIGHT_RING_RADIUS as u64);
+
+/// Coord-collision retry budget: how many salts the contract tries before
+/// giving up. With ~120 distinct radial-60 lattice points the practical hit
+/// rate is tiny — 16 is comfortable headroom.
+pub const FIRST_LIGHT_RETRY_BUDGET: u32 = 16;
+
+/// Maximum value of the DNA rarity nibble (low 4 bits of byte 17) that
+/// `computeRarity` in art/src/rarity.ts will score as a Common contribution.
+/// The scorer adds `Math.floor(nibble / 5)` points; with all other Common-
+/// floor traits zeroed the cap is 4 (so the nibble can contribute 0 points
+/// without breaking class/aura/feature constraints). We clamp on-chain to
+/// guarantee Common-tier output regardless of seed.
+pub const FIRST_LIGHT_RARITY_CAP: u8 = 4;
+
+/// Mythic class indices that First Light reveals must avoid (Hollow + Aether,
+/// per `art/src/rarity.ts:MYTHIC_CLASS_IDS`). These are the upper-nibble
+/// values of DNA byte 0. We clamp into the safe range by masking off the
+/// top bit of the nibble (mythic indices are 14/15 = 0b1110/0b1111).
+pub const FIRST_LIGHT_MYTHIC_CLASS_IDS: [u8; 2] = [14, 15];
+
 #[contractimpl]
 impl PlanetContract {
+    #[allow(clippy::too_many_arguments)]
     pub fn __constructor(
         e: &Env,
         admin: Address,
@@ -211,12 +307,25 @@ impl PlanetContract {
         uri: String,
         name: String,
         symbol: String,
+        native_token: Address,
+        burn_address: Address,
     ) {
         e.storage().instance().set(&DataKey::Admin, &admin);
         e.storage().instance().set(&DataKey::Drand, &drand);
         e.storage()
             .instance()
             .set(&DataKey::ConjoinCooldown, &DEFAULT_COOLDOWN);
+        e.storage()
+            .instance()
+            .set(&DataKey::NativeToken, &native_token);
+        e.storage()
+            .instance()
+            .set(&DataKey::BurnAddress, &burn_address);
+        // Initialize the distribution pool accumulator at 0 so the i128 type
+        // is pinned in storage from the start.
+        e.storage()
+            .instance()
+            .set(&DataKey::DistributionPool, &0i128);
         Base::set_metadata(e, uri, name, symbol);
     }
 
@@ -306,6 +415,243 @@ impl PlanetContract {
         Ok(token_id)
     }
 
+    /// First Light: commit half. Charges the keeper 10 XLM at commit time
+    /// (split 5/5 between burn + DistributionPool), stashes a commitment of
+    /// `kind = FirstLight(keeper)`, and emits `FirstLightCommitted`.
+    ///
+    /// One-shot per keeper: rejects with `FirstLightAlreadyClaimed` if the
+    /// address has already revealed a First Light claim. Repeated *commits*
+    /// without a reveal are NOT blocked — that's a self-imposed user fee and
+    /// the contract has no way to refund without a separate flow.
+    ///
+    /// Soulbound + Common-tier + Outer-Dark constraints are enforced at
+    /// reveal time, not here, so this entrypoint stays cheap.
+    pub fn claim_first_light(e: &Env, keeper: Address, observed_round: u64) -> Result<u32, Error> {
+        keeper.require_auth();
+
+        // One-shot gate. A reveal sets FirstLightClaimed(keeper)=true; this
+        // check makes repeated claims by the same keeper revert before any
+        // funds move.
+        if e.storage()
+            .persistent()
+            .get::<_, bool>(&DataKey::FirstLightClaimed(keeper.clone()))
+            .unwrap_or(false)
+        {
+            return Err(Error::FirstLightAlreadyClaimed);
+        }
+
+        // Charge 10 XLM. Split: 5 burned to BurnAddress, 5 accumulated in
+        // DistributionPool. Both legs require the keeper's auth (covered by
+        // `keeper.require_auth()` above) and the contract is the recipient
+        // for the pool leg.
+        let native: Address = e
+            .storage()
+            .instance()
+            .get(&DataKey::NativeToken)
+            .ok_or(Error::NotAdmin)?;
+        let burn: Address = e
+            .storage()
+            .instance()
+            .get(&DataKey::BurnAddress)
+            .ok_or(Error::NotAdmin)?;
+        let token = token::Client::new(e, &native);
+        // Burn leg: keeper → burn address.
+        token.transfer(&keeper, &burn, &FIRST_LIGHT_BURN_STROOPS);
+        // Pool leg: keeper → this contract.
+        let pool_recipient = e.current_contract_address();
+        token.transfer(&keeper, &pool_recipient, &FIRST_LIGHT_POOL_STROOPS);
+        let pool: i128 = e
+            .storage()
+            .instance()
+            .get(&DataKey::DistributionPool)
+            .unwrap_or(0);
+        e.storage().instance().set(
+            &DataKey::DistributionPool,
+            &(pool.saturating_add(FIRST_LIGHT_POOL_STROOPS)),
+        );
+
+        let now = e.ledger().sequence();
+        let commitment_id = stash_commitment(
+            e,
+            Commitment {
+                committer: keeper.clone(),
+                to: keeper.clone(),
+                target_round: observed_round + LOOKAHEAD_ROUNDS,
+                commit_ledger: now,
+                kind: CommitmentKind::FirstLight(keeper),
+            },
+        );
+        Ok(commitment_id)
+    }
+
+    /// First Light: reveal half. Anyone can call (the commitment carries the
+    /// keeper). Mints the planet to the keeper with:
+    ///  * Common-tier-floor DNA (rarity nibble clamped, mythic classes
+    ///    deflected),
+    ///  * an Outer-Dark coord derived deterministically from the keeper's
+    ///    address (with a small retry budget to avoid collisions),
+    ///  * `Soulbound(token_id) = true`,
+    ///  * `HealthySince(token_id) = current ledger` (so the 7-day timer
+    ///    starts ticking on day 0 of the keeper's care).
+    pub fn reveal_first_light(e: &Env, id: u32) -> Result<u32, Error> {
+        let c = take_commitment(e, id)?;
+        let keeper = match c.kind.clone() {
+            CommitmentKind::FirstLight(k) => k,
+            _ => return Err(Error::InvalidCommitmentKind),
+        };
+        let now = e.ledger().sequence();
+        if now < c.commit_ledger.saturating_add(MIN_REVEAL_DELAY_LEDGERS) {
+            return Err(Error::CommitmentNotReady);
+        }
+        // Defensive: surfacing a second reveal of the same keeper through a
+        // race condition (two open commitments) should still reject. The
+        // commitment was already consumed by `take_commitment`, so we re-
+        // check the persistent flag.
+        if e.storage()
+            .persistent()
+            .get::<_, bool>(&DataKey::FirstLightClaimed(keeper.clone()))
+            .unwrap_or(false)
+        {
+            return Err(Error::FirstLightAlreadyClaimed);
+        }
+
+        let seed = random_at(e, c.target_round)?;
+        let token_id = Enumerable::sequential_mint(e, &keeper);
+        let dna_raw = dna::from_seed(e, &seed, c.target_round, token_id);
+        let dna = clamp_first_light_dna(e, &dna_raw);
+        let latent = dna::latent_from_seed(e, &seed, token_id);
+        let (x, y) = derive_first_light_coord(e, &keeper)?;
+
+        write_planet(e, token_id, &dna, (x, y));
+        // Note: write_planet already extends Dna/Vitals/Coords TTL. The
+        // additional keys below are written + their TTL is extended in one
+        // pass at the end of this function via `extend_planet_ttl(token_id)`.
+        let p = e.storage().persistent();
+        p.set(&DataKey::Latent(token_id), &latent);
+        p.set(&DataKey::CivTier(token_id), &0u32);
+        p.set(&DataKey::Soulbound(token_id), &true);
+        p.set(&DataKey::HealthySince(token_id), &now);
+        p.set(&DataKey::FirstLightCoord(x, y), &true);
+        p.set(&DataKey::FirstLightClaimed(keeper.clone()), &true);
+        // One TTL bump covers Dna/Vitals/Coords + (now-present) Latent,
+        // CivTier, Soulbound, HealthySince. FirstLightCoord +
+        // FirstLightClaimed are tied to keeper / coord rather than the
+        // planet — bump them explicitly so they outlive the planet's
+        // ordinary care cycle.
+        extend_planet_ttl(e, token_id);
+        p.extend_ttl(
+            &DataKey::FirstLightCoord(x, y),
+            TTL_THRESHOLD,
+            TTL_EXTEND_TO,
+        );
+        p.extend_ttl(
+            &DataKey::FirstLightClaimed(keeper.clone()),
+            TTL_THRESHOLD,
+            TTL_EXTEND_TO,
+        );
+
+        let population = dna::population_of_latent(&latent.to_array()) as u32;
+        Born {
+            owner: keeper.clone(),
+            id: token_id,
+            generation: 0,
+            drand_round: c.target_round,
+        }
+        .publish(e);
+        PopulationExpressed {
+            id: token_id,
+            population,
+        }
+        .publish(e);
+        FirstLightClaimedEvent {
+            keeper,
+            id: token_id,
+            x,
+            y,
+        }
+        .publish(e);
+        e.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+        Ok(token_id)
+    }
+
+    /// View: has this address already revealed a First Light claim?
+    pub fn first_light_claimed(e: &Env, keeper: Address) -> bool {
+        e.storage()
+            .persistent()
+            .get::<_, bool>(&DataKey::FirstLightClaimed(keeper))
+            .unwrap_or(false)
+    }
+
+    /// View: is this token soulbound? Returns false for unknown tokens.
+    pub fn is_soulbound_of(e: &Env, id: u32) -> bool {
+        is_soulbound(e, id)
+    }
+
+    /// View: ledger at which `id`'s healthy-since timer started, or 0 if
+    /// the planet is not currently in the healthy band.
+    pub fn healthy_since_of(e: &Env, id: u32) -> u32 {
+        e.storage()
+            .persistent()
+            .get(&DataKey::HealthySince(id))
+            .unwrap_or(0)
+    }
+
+    /// View: current contents of the Phase 4 distribution pool, in stroops.
+    pub fn distribution_pool(e: &Env) -> i128 {
+        e.storage()
+            .instance()
+            .get(&DataKey::DistributionPool)
+            .unwrap_or(0)
+    }
+
+    /// View: the configured burn address.
+    pub fn burn_address(e: &Env) -> Address {
+        e.storage().instance().get(&DataKey::BurnAddress).unwrap()
+    }
+
+    /// View: the configured native XLM SAC.
+    pub fn native_token(e: &Env) -> Address {
+        e.storage().instance().get(&DataKey::NativeToken).unwrap()
+    }
+
+    /// Admin-only: rotate the burn address (e.g. point at a governance
+    /// multisig once one is deployed).
+    pub fn set_burn_address(e: &Env, new_burn: Address) -> Result<(), Error> {
+        let admin = require_admin(e)?;
+        admin.require_auth();
+        e.storage().instance().set(&DataKey::BurnAddress, &new_burn);
+        e.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+        ConfigChanged {
+            key: soroban_sdk::symbol_short!("burn"),
+            value: 0,
+        }
+        .publish(e);
+        Ok(())
+    }
+
+    /// Admin-only: rotate the native token SAC. Provided for future-proofing
+    /// if Stellar ever issues a new canonical XLM SAC.
+    pub fn set_native_token(e: &Env, new_token: Address) -> Result<(), Error> {
+        let admin = require_admin(e)?;
+        admin.require_auth();
+        e.storage()
+            .instance()
+            .set(&DataKey::NativeToken, &new_token);
+        e.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+        ConfigChanged {
+            key: soroban_sdk::symbol_short!("native"),
+            value: 0,
+        }
+        .publish(e);
+        Ok(())
+    }
+
     /// Commit to conjoining two parents. Same anti-grinding flow as
     /// commit_genesis: target_round is pinned to a future drand round so
     /// the user can't peek the seed at commit time.
@@ -320,6 +666,11 @@ impl PlanetContract {
     ) -> Result<u32, Error> {
         if parent_a == parent_b {
             return Err(Error::SameParent);
+        }
+        // Soulbound parents can't breed. Phase 3 will *clear* soulbound on a
+        // successful cross-owner reveal, but Phase 1's contract just rejects.
+        if is_soulbound(e, parent_a) || is_soulbound(e, parent_b) {
+            return Err(Error::SoulboundLocked);
         }
         let owner_a = Base::owner_of(e, parent_a);
         let owner_b = Base::owner_of(e, parent_b);
@@ -539,6 +890,14 @@ impl PlanetContract {
             .publish(e);
         }
 
+        // Soulbound auto-release via consistent care. The healthy band is
+        // `[40, 220]` for every vital; the moment any vital is out of band
+        // we reset HealthySince, and once HealthySince has been continuously
+        // set for `SOULBOUND_RELEASE_LEDGERS` (7 days) the soulbound flag
+        // clears. `clear_soulbound` is a no-op for tokens that were never
+        // soulbound, so it's safe to call on every healthy care.
+        update_healthy_since(e, id, &updated, now);
+
         extend_planet_ttl(e, id);
 
         Cared { id, action }.publish(e);
@@ -733,6 +1092,26 @@ impl PlanetContract {
 #[contractimpl(contracttrait)]
 impl NonFungibleToken for PlanetContract {
     type ContractType = Enumerable;
+
+    /// Override the default `NonFungibleToken::transfer` so soulbound tokens
+    /// can't be moved. Panics with `Error::SoulboundLocked` instead of
+    /// delegating to the Enumerable contract type when the token is locked.
+    fn transfer(e: &Env, from: Address, to: Address, token_id: u32) {
+        if is_soulbound(e, token_id) {
+            soroban_sdk::panic_with_error!(e, Error::SoulboundLocked);
+        }
+        Enumerable::transfer(e, &from, &to, token_id);
+    }
+
+    /// Override `transfer_from` (operator-driven transfer) with the same
+    /// soulbound gate. Without this an approved operator could route around
+    /// the lock that `transfer` enforces.
+    fn transfer_from(e: &Env, spender: Address, from: Address, to: Address, token_id: u32) {
+        if is_soulbound(e, token_id) {
+            soroban_sdk::panic_with_error!(e, Error::SoulboundLocked);
+        }
+        Enumerable::transfer_from(e, &spender, &from, &to, token_id);
+    }
 }
 
 #[contractimpl(contracttrait)]
@@ -843,6 +1222,149 @@ fn extend_planet_ttl(e: &Env, id: u32) {
             .persistent()
             .extend_ttl(&civ_key, TTL_THRESHOLD, TTL_EXTEND_TO);
     }
+    // Soulbound + HealthySince exist only for First Light planets — guard so
+    // we don't accidentally write TTL markers for empty slots on every care.
+    let sb_key = DataKey::Soulbound(id);
+    if e.storage().persistent().has(&sb_key) {
+        e.storage()
+            .persistent()
+            .extend_ttl(&sb_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+    }
+    let hs_key = DataKey::HealthySince(id);
+    if e.storage().persistent().has(&hs_key) {
+        e.storage()
+            .persistent()
+            .extend_ttl(&hs_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+    }
+}
+
+/// Read a planet's soulbound flag with a `false` default. False covers all
+/// non-First-Light planets (the storage slot only exists on FL reveals).
+fn is_soulbound(e: &Env, id: u32) -> bool {
+    e.storage()
+        .persistent()
+        .get::<_, bool>(&DataKey::Soulbound(id))
+        .unwrap_or(false)
+}
+
+/// Healthy-band check + bookkeeping for the soulbound auto-release path.
+/// Called from `care` AFTER vitals have been updated.
+///
+/// Logic:
+///  - In-band care: set HealthySince to `now` if previously 0; otherwise
+///    leave it alone. If `now - since >= SOULBOUND_RELEASE_LEDGERS` AND
+///    the token is currently soulbound, clear the flag + emit release.
+///  - Out-of-band care: reset HealthySince to 0 (next healthy call starts
+///    a fresh streak).
+fn update_healthy_since(e: &Env, id: u32, v: &Vitals, now: u32) {
+    let in_band = |x: u32| (40..=220).contains(&x);
+    let all_healthy = in_band(v.temperature)
+        && in_band(v.hydration)
+        && in_band(v.gravity)
+        && in_band(v.biomass)
+        && in_band(v.spirit);
+    let p = e.storage().persistent();
+    let since: u32 = p.get(&DataKey::HealthySince(id)).unwrap_or(0);
+    if all_healthy {
+        if since == 0 {
+            p.set(&DataKey::HealthySince(id), &now);
+            return;
+        }
+        if now.saturating_sub(since) >= SOULBOUND_RELEASE_LEDGERS && is_soulbound(e, id) {
+            p.remove(&DataKey::Soulbound(id));
+            SoulboundReleased {
+                id,
+                path: soroban_sdk::symbol_short!("care"),
+            }
+            .publish(e);
+        }
+    } else if since != 0 {
+        p.set(&DataKey::HealthySince(id), &0u32);
+    }
+}
+
+/// Clamp generated DNA to the Common-tier floor: zero the rarity nibble's
+/// upper bits so it stays at most `FIRST_LIGHT_RARITY_CAP`, and deflect any
+/// mythic class index away from Hollow/Aether by masking off the top bit of
+/// the class nibble (14/15 → 6/7, i.e. Jungle/Crystal — still exotic but no
+/// longer mythic per `MYTHIC_CLASS_IDS` in art/src/rarity.ts).
+fn clamp_first_light_dna(e: &Env, dna: &BytesN<32>) -> BytesN<32> {
+    let mut out = dna.to_array();
+    // Rarity nibble: clamp the low 4 bits of byte 17 to the Common cap.
+    let aff = out[dna::IDX_AFFINITY_RARITY] & 0xF0;
+    let rarity = (out[dna::IDX_AFFINITY_RARITY] & 0x0F).min(FIRST_LIGHT_RARITY_CAP);
+    out[dna::IDX_AFFINITY_RARITY] = aff | rarity;
+    // Class nibble: mythic ids are 14 (0xE) and 15 (0xF) per the constant
+    // table. Masking off the high bit of the nibble (`& 0b0111`) maps both
+    // to the low-half "exotic" range. Skip the work for non-mythic classes
+    // so the byte is left alone for indices 0..=13.
+    let high = (out[dna::IDX_CLASS] >> 4) & 0x0F;
+    if FIRST_LIGHT_MYTHIC_CLASS_IDS.contains(&high) {
+        out[dna::IDX_CLASS] = ((high & 0b0111) << 4) | (out[dna::IDX_CLASS] & 0x0F);
+    }
+    BytesN::from_array(e, &out)
+}
+
+/// Derive an Outer-Dark coord from the keeper's contract-encoded address.
+/// We salt the hash with a retry counter so two keepers whose first-derived
+/// coord happens to collide each get their own lattice point.
+///
+/// The keeper byte view is the strkey (`G...` / `C...`) — stable across
+/// host versions because it's the user-visible identity, not the internal
+/// `ScAddress` encoding. `String::to_bytes()` yields the UTF-8 strkey bytes.
+///
+/// Mapping:
+///   - hash(salt || strkey(keeper)) → 32 bytes via the host's `crypto.sha256`
+///   - byte slices [0..4] and [4..8] interpreted as i32 LE coords
+///   - both modded into `±FIRST_LIGHT_RING_RADIUS`
+///   - if `r²` lands inside Outer Dark and the point isn't already taken,
+///     return it; else bump the salt and retry up to FIRST_LIGHT_RETRY_BUDGET.
+fn derive_first_light_coord(e: &Env, keeper: &Address) -> Result<(i32, i32), Error> {
+    use soroban_sdk::Bytes;
+    let keeper_bytes = keeper.to_string().to_bytes();
+    for salt in 0..FIRST_LIGHT_RETRY_BUDGET {
+        let mut payload = Bytes::new(e);
+        payload.append(&Bytes::from_array(e, &salt.to_be_bytes()));
+        payload.append(&keeper_bytes);
+        let h = e.crypto().sha256(&payload).to_bytes().to_array();
+        // i32 from first 4 bytes (LE) so a tiny salt swap moves the point.
+        let raw_x = i32::from_le_bytes([h[0], h[1], h[2], h[3]]);
+        let raw_y = i32::from_le_bytes([h[4], h[5], h[6], h[7]]);
+        // Mod into ±FIRST_LIGHT_RING_RADIUS. rem_euclid keeps the sign sane.
+        let span = FIRST_LIGHT_RING_RADIUS;
+        let modspan = (span as i64) * 2 + 1; // -span..=+span inclusive
+        let x = (raw_x as i64).rem_euclid(modspan) as i32 - span;
+        let y = (raw_y as i64).rem_euclid(modspan) as i32 - span;
+
+        // If we landed inside the Outer-Dark sector and the coord is free,
+        // we're done.
+        let r2 = (x as i64).unsigned_abs() * (x as i64).unsigned_abs()
+            + (y as i64).unsigned_abs() * (y as i64).unsigned_abs();
+        if r2 >= FIRST_LIGHT_RING_R2
+            && !e
+                .storage()
+                .persistent()
+                .has(&DataKey::FirstLightCoord(x, y))
+        {
+            return Ok((x, y));
+        }
+
+        // Push outward if the random point fell *inside* Outer-Dark's
+        // radius. We do this by clamping each axis to the nearest sign
+        // multiplied by `span` so r² is exactly `2 * span²` ≥ ring_r2.
+        let (px, py) = (
+            if x >= 0 { span } else { -span },
+            if y >= 0 { span } else { -span },
+        );
+        if !e
+            .storage()
+            .persistent()
+            .has(&DataKey::FirstLightCoord(px, py))
+        {
+            return Ok((px, py));
+        }
+    }
+    Err(Error::FirstLightCoordCollision)
 }
 
 fn read_dna(e: &Env, id: u32) -> Result<BytesN<32>, Error> {
