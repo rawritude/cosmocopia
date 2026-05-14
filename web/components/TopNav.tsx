@@ -3,37 +3,26 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
-const TABS: Array<{ href: string; label: string }> = [
-  { href: '/', label: 'home' },
-  { href: '/galaxy', label: 'galaxy' },
-  { href: '/?conjoin=1', label: 'conjunction' },
+const TABS: Array<{ href: string; label: string; match: (path: string) => boolean }> = [
+  { href: '/', label: 'home', match: (p) => p === '/' },
+  { href: '/galaxy', label: 'galaxy', match: (p) => p.startsWith('/galaxy') },
+  { href: '/conjunction', label: 'conjunction', match: (p) => p.startsWith('/conjunction') },
 ];
 
 export default function TopNav() {
   const pathname = usePathname() || '/';
   return (
     <nav className="kit-tabs" aria-label="primary">
-      {TABS.map((t) => {
-        // Conjunction is a soft-route — it lives on the home page but with a
-        // hash so the OwnedPlanets panel can scroll itself into view + open
-        // the conjoin picker. Home and Galaxy are real route matches.
-        const isActive =
-          t.href === '/galaxy'
-            ? pathname.startsWith('/galaxy')
-            : t.href === '/'
-              ? pathname === '/'
-              : false;
-        return (
-          <Link
-            key={t.label}
-            href={t.href}
-            className="kit-tab"
-            data-active={isActive ? 'true' : 'false'}
-          >
-            {t.label}
-          </Link>
-        );
-      })}
+      {TABS.map((t) => (
+        <Link
+          key={t.label}
+          href={t.href}
+          className="kit-tab"
+          data-active={t.match(pathname) ? 'true' : 'false'}
+        >
+          {t.label}
+        </Link>
+      ))}
       <span className="kit-tag">cosmocopia · testnet</span>
     </nav>
   );

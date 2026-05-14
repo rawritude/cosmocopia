@@ -226,84 +226,86 @@ export default function GalaxyMap() {
   }
 
   return (
-    <div className="row" style={{ alignItems: 'flex-start' }}>
-      <div className="panel" style={{ flex: 1, minWidth: 320 }}>
-        {err && <p className="errBox">{err}</p>}
-        {!planets && !err && <p className="note">scanning the deployed contract for planets…</p>}
-        <canvas
-          ref={canvasRef}
-          style={{ width: '100%', aspectRatio: '4 / 3', display: 'block', cursor: dragRef.current ? 'grabbing' : 'grab', touchAction: 'none' }}
-          onMouseDown={(e) => {
-            const rect = e.currentTarget.getBoundingClientRect();
-            dragRef.current = {
-              x: e.clientX - rect.left,
-              y: e.clientY - rect.top,
-              cx: view.cx,
-              cy: view.cy,
-            };
-          }}
-          onMouseMove={(e) => {
-            const rect = e.currentTarget.getBoundingClientRect();
-            const cx = e.clientX - rect.left;
-            const cy = e.clientY - rect.top;
-            if (dragRef.current) {
-              const dx = cx - dragRef.current.x;
-              const dy = cy - dragRef.current.y;
-              setView((v) => ({ ...v, cx: dragRef.current!.cx - dx / v.zoom, cy: dragRef.current!.cy - dy / v.zoom }));
-            } else {
-              setHover(planetAt(cx, cy));
-            }
-          }}
-          onMouseUp={(e) => {
-            const rect = e.currentTarget.getBoundingClientRect();
-            const cx = e.clientX - rect.left;
-            const cy = e.clientY - rect.top;
-            const wasDrag = dragRef.current && (Math.abs(cx - dragRef.current.x) > 3 || Math.abs(cy - dragRef.current.y) > 3);
-            dragRef.current = null;
-            if (!wasDrag) {
-              const p = planetAt(cx, cy);
-              setSelected(p);
-            }
-          }}
-          onMouseLeave={() => { dragRef.current = null; setHover(null); }}
-          onWheel={(e) => {
-            e.preventDefault();
-            const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
-            setView((v) => ({ ...v, zoom: Math.max(1, Math.min(40, v.zoom * factor)) }));
-          }}
-        />
-        <p className="note">
-          {planets ? `${planets.length} planet${planets.length === 1 ? '' : 's'} on chain` : ''}
-          {' · drag to pan · scroll to zoom · click a planet for details'}
-        </p>
+    <div className="galaxy-stage">
+      {err && (
+        <div className="floating-panel galaxy-detail">
+          <div className="panel has-titlebar">
+            <div className="panel-titlebar"><span className="tb-title">error</span><span className="tb-stripes" /></div>
+            <div className="panel-body"><p className="errBox" style={{ margin: 0 }}>{err}</p></div>
+          </div>
+        </div>
+      )}
+      {!planets && !err && (
+        <div className="galaxy-hint" style={{ top: 8, bottom: 'auto' }}>scanning chain…</div>
+      )}
+      <canvas
+        ref={canvasRef}
+        className="galaxy-canvas"
+        onMouseDown={(e) => {
+          const rect = e.currentTarget.getBoundingClientRect();
+          dragRef.current = {
+            x: e.clientX - rect.left,
+            y: e.clientY - rect.top,
+            cx: view.cx,
+            cy: view.cy,
+          };
+        }}
+        onMouseMove={(e) => {
+          const rect = e.currentTarget.getBoundingClientRect();
+          const cx = e.clientX - rect.left;
+          const cy = e.clientY - rect.top;
+          if (dragRef.current) {
+            const dx = cx - dragRef.current.x;
+            const dy = cy - dragRef.current.y;
+            setView((v) => ({ ...v, cx: dragRef.current!.cx - dx / v.zoom, cy: dragRef.current!.cy - dy / v.zoom }));
+          } else {
+            setHover(planetAt(cx, cy));
+          }
+        }}
+        onMouseUp={(e) => {
+          const rect = e.currentTarget.getBoundingClientRect();
+          const cx = e.clientX - rect.left;
+          const cy = e.clientY - rect.top;
+          const wasDrag = dragRef.current && (Math.abs(cx - dragRef.current.x) > 3 || Math.abs(cy - dragRef.current.y) > 3);
+          dragRef.current = null;
+          if (!wasDrag) {
+            const p = planetAt(cx, cy);
+            setSelected(p);
+          }
+        }}
+        onMouseLeave={() => { dragRef.current = null; setHover(null); }}
+        onWheel={(e) => {
+          e.preventDefault();
+          const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+          setView((v) => ({ ...v, zoom: Math.max(1, Math.min(40, v.zoom * factor)) }));
+        }}
+      />
+      <div className="galaxy-hint">
+        {planets ? `${planets.length} planet${planets.length === 1 ? '' : 's'}` : '—'} ·
+        {' drag · scroll · click'}
       </div>
 
-      <div className="panel" style={{ width: 280, flexShrink: 0 }}>
-        <h2 style={{ marginTop: 0 }}>{selected ? `planet #${selected.id}` : 'sectors'}</h2>
-        {selected ? (
-          <PlanetDetail planet={selected} />
-        ) : (
-          <ul style={{ margin: 0, paddingLeft: 0, listStyle: 'none' }}>
-            {SECTORS.map((s) => (
-              <li
-                key={s.name}
-                style={{
-                  marginBottom: 12,
-                  fontSize: 12,
-                  fontFamily: 'var(--font-mono)',
-                }}
-              >
-                <span
-                  style={{
-                    display: 'inline-block',
-                    width: 12,
-                    height: 12,
-                    background: s.color,
-                    border: '1px solid var(--pitch)',
-                    marginRight: 8,
-                    verticalAlign: 'middle',
-                  }}
-                />
+      <div className="floating-panel galaxy-legend">
+        <div className="panel has-titlebar">
+          <div className="panel-titlebar">
+            <span className="tb-title">sectors</span>
+            <span className="tb-stripes" />
+          </div>
+          <div className="panel-body">
+            <ul style={{ margin: 0, paddingLeft: 0, listStyle: 'none' }}>
+              {SECTORS.map((s) => (
+                <li key={s.name} style={{ marginBottom: 'var(--space-3)', fontSize: 12, fontFamily: 'var(--font-mono)' }}>
+                  <span
+                    style={{
+                      display: 'inline-block',
+                      width: 12,
+                      height: 12,
+                      background: s.color,
+                      border: '1px solid var(--pitch)',
+                      marginRight: 8,
+                      verticalAlign: 'middle',
+                    }}
+                  />
                 <strong style={{ fontWeight: 700, letterSpacing: '0.04em' }}>{s.name}</strong>
                 <br />
                 <span
@@ -318,9 +320,24 @@ export default function GalaxyMap() {
                 </span>
               </li>
             ))}
-          </ul>
-        )}
+            </ul>
+          </div>
+        </div>
       </div>
+
+      {selected && (
+        <div className="floating-panel galaxy-detail">
+          <div className="panel has-titlebar">
+            <div className="panel-titlebar">
+              <span className="tb-title">planet #{selected.id}</span>
+              <span className="tb-stripes" />
+            </div>
+            <div className="panel-body">
+              <PlanetDetail planet={selected} />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

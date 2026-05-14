@@ -1152,6 +1152,152 @@ ol.note li {
 .chip-anon .dot { display: none; }
 
 /* ============================================================
+   Galaxy page · full-bleed stage with floating panels
+   ============================================================ */
+
+.galaxy-page {
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100vh - 40px);
+  padding: 0;
+  max-width: none;
+}
+.galaxy-masthead {
+  max-width: var(--page-max);
+  width: 100%;
+  margin: 0 auto;
+  padding: var(--space-8) var(--page-pad-x) var(--space-4);
+  flex-shrink: 0;
+}
+.galaxy-stage {
+  position: relative;
+  flex: 1;
+  margin: 0 var(--space-6) var(--space-6);
+  border: 2px solid var(--pitch);
+  box-shadow: var(--shadow-hard);
+  background: var(--void);
+  min-height: 520px;
+  overflow: hidden;
+}
+.galaxy-stage canvas.galaxy-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  position: absolute;
+  inset: 0;
+  touch-action: none;
+  cursor: grab;
+}
+.galaxy-stage canvas.galaxy-canvas:active { cursor: grabbing; }
+.galaxy-hint {
+  position: absolute;
+  bottom: 8px;
+  left: 12px;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: var(--lumen);
+  pointer-events: none;
+  text-transform: uppercase;
+  background: rgba(0, 0, 0, 0.6);
+  padding: 3px 8px;
+  border: 1px solid var(--aether);
+}
+.floating-panel {
+  position: absolute;
+  z-index: 5;
+  pointer-events: auto;
+}
+.floating-panel .panel { margin: 0; min-width: 240px; }
+.floating-panel.galaxy-legend { top: 12px; right: 12px; width: 280px; }
+.floating-panel.galaxy-detail { bottom: 12px; right: 12px; width: 300px; }
+@media (max-width: 860px) {
+  .galaxy-masthead { padding: 24px 16px 12px; }
+  .galaxy-stage { margin: 0 12px 12px; }
+  .floating-panel.galaxy-legend,
+  .floating-panel.galaxy-detail {
+    right: 8px; left: auto; width: auto; max-width: 320px;
+  }
+  .floating-panel.galaxy-legend { top: 8px; }
+  .floating-panel.galaxy-detail { bottom: 36px; }
+}
+@media (max-width: 480px) {
+  .floating-panel.galaxy-legend,
+  .floating-panel.galaxy-detail {
+    left: 8px; right: 8px; max-width: none;
+  }
+  .galaxy-hint { font-size: 9px; left: 8px; bottom: 6px; }
+}
+
+/* ============================================================
+   Conjunction page · 5-column compose
+   ============================================================ */
+
+.conjoin-grid {
+  display: grid;
+  grid-template-columns: 1fr 60px 1fr 60px 1fr;
+  gap: var(--space-4);
+  align-items: stretch;
+  margin-bottom: var(--space-8);
+}
+.conjoin-op {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-chrome);
+  font-size: 40px;
+  color: var(--primary);
+  text-align: center;
+  letter-spacing: 0;
+  line-height: 1;
+}
+.conjoin-slot {
+  background: var(--nebula);
+  border: 2px solid var(--pitch);
+  box-shadow: var(--shadow-hard-sm);
+  padding: 0;
+  min-height: 280px;
+  display: flex;
+  flex-direction: column;
+}
+.conjoin-slot.empty {
+  border-style: dashed;
+  border-color: var(--aether);
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  background: transparent;
+  box-shadow: none;
+}
+.conjoin-slot.empty:hover {
+  border-color: var(--primary);
+  background: var(--primary-10);
+}
+.conjoin-slot .slot-body {
+  padding: var(--space-3);
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+.conjoin-detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: var(--space-4);
+}
+@media (max-width: 860px) {
+  .conjoin-grid { grid-template-columns: 1fr 1fr; gap: 12px; }
+  .conjoin-grid > .conjoin-op { display: none; }
+  .conjoin-grid > .conjoin-child { grid-column: span 2; }
+  .conjoin-detail-grid { grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 560px) {
+  .conjoin-grid { grid-template-columns: 1fr; }
+  .conjoin-grid > .conjoin-child { grid-column: auto; }
+  .conjoin-detail-grid { grid-template-columns: 1fr; }
+}
+
+/* ============================================================
    Responsive — mobile-first overrides
    ============================================================ */
 
