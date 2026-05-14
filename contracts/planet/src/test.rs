@@ -42,6 +42,13 @@ impl MockDrand {
             .get::<_, LatestRandom>(&STATE_KEY)
             .map(|l| l.value)
     }
+
+    /// Wipe the seed so `get(_)` returns `None`. Used by tests that need to
+    /// simulate "drand round not yet published" — the contract's `random_at`
+    /// then surfaces `Err(DrandUnavailable)`.
+    pub fn clear(env: Env) {
+        env.storage().instance().remove(&STATE_KEY);
+    }
 }
 
 // ---------- Fixture ----------
@@ -1273,22 +1280,35 @@ fn conjoin_same_pair_twice_rejects_at_commit_reverse_order() {
 
 #[test]
 fn conjoin_different_pair_after_spent_pair_succeeds() {
-    // (A, B) spent doesn't invalidate A — A can still conjoin with C.
-    // The rule is per-pair, not per-planet.
+    // (A, B) spent doesn't invalidate A — A can still conjoin with C, and B
+    // can still conjoin with D. The rule is per-pair, not per-planet, so
+    // exercising both A-side and B-side leftover pairings pins the
+    // normalized-key semantics maximally explicit (audit L-3).
     let f = setup(0x45);
     let user = Address::generate(&f.env);
     let a = mint_genesis(&f, &user, 0, 0);
     let b = mint_genesis(&f, &user, 1, 1);
     let c = mint_genesis(&f, &user, 2, 2);
+    let d = mint_genesis(&f, &user, 3, 3);
     let _ = conjoin(&f, a, b, &user);
 
     // Clear cooldown so the next pair isn't blocked by OnCooldown.
     let now = f.env.ledger().sequence();
     f.env.ledger().set_sequence_number(now + 800);
 
-    // (A, C) is fresh — must succeed.
+    // (A, C) is fresh — A is not tainted by being in a spent pair.
     let child2 = conjoin(&f, a, c, &user);
     assert_eq!(f.planet.owner_of(&child2), user);
+
+    // Advance cooldown again so we can run the B-side check.
+    let now = f.env.ledger().sequence();
+    f.env.ledger().set_sequence_number(now + 800);
+
+    // (B, D) is fresh — B is symmetrically not tainted by being in a spent
+    // pair. Pinning both sides makes the per-pair-not-per-planet rule
+    // unambiguous in the test suite.
+    let child3 = conjoin(&f, b, d, &user);
+    assert_eq!(f.planet.owner_of(&child3), user);
 }
 
 #[test]
@@ -1365,4 +1385,117 @@ fn pair_spent_event_emitted_on_first_conjoin() {
         "expected PairSpent event for normalized pair ({}, {}) → child {}",
         lo, hi, child
     );
+}
+
+#[test]
+fn reveal_conjoin_does_not_mark_spent_pair_if_drand_unavailable() {
+    // Pins the structural invariant: if the reveal aborts before
+    // `mark_pair_spent`, the SpentPair slot must remain absent. Today the
+    // structural argument is "drand check fires before the write" — this
+    // test guards against a future refactor that moves a fallible call
+    // below the write and silently breaks "one child per pair, ever"
+    // (audit M-1).
+    let f = setup(0x46);
+    let user = Address::generate(&f.env);
+    let a = mint_genesis(&f, &user, 0, 0);
+    let b = mint_genesis(&f, &user, 1, 1);
+
+    // Commit while the drand mock still has its seed so commit_conjoin's
+    // input validation has no reason to fail.
+    let commitment_id = f.planet.commit_conjoin(&a, &b, &user, &200u64);
+
+    // Now wipe the mock seed: `random_at` inside `reveal_conjoin` will see
+    // `None` from the drand client and return Err(DrandUnavailable). This
+    // happens *before* `mark_pair_spent` runs.
+    let drand_client = MockDrandClient::new(&f.env, &f.drand_id);
+    drand_client.clear();
+
+    // Advance past the reveal delay so we hit the drand check, not
+    // CommitmentNotReady.
+    let now = f.env.ledger().sequence();
+    f.env
+        .ledger()
+        .set_sequence_number(now + crate::MIN_REVEAL_DELAY_LEDGERS);
+
+    let err = f
+        .planet
+        .try_reveal_conjoin(&commitment_id)
+        .err()
+        .unwrap()
+        .unwrap();
+    assert_eq!(err, Error::DrandUnavailable);
+
+    // The side-effect must NOT have leaked. Peek SpentPair directly via
+    // `as_contract` and assert the slot is still absent.
+    let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
+    let leaked: bool = f.env.as_contract(&f.planet.address, || {
+        f.env
+            .storage()
+            .persistent()
+            .has(&crate::DataKey::SpentPair(lo, hi))
+    });
+    assert!(
+        !leaked,
+        "SpentPair({},{}) must NOT be written when reveal aborts on DrandUnavailable",
+        lo, hi
+    );
+}
+
+#[test]
+fn reveal_conjoin_rejects_second_commit_after_real_race_with_first_reveal() {
+    // The canonical production race: two real commits on the same pair land
+    // with the cooldown elapsed between them, then the first commit reveals
+    // (marking SpentPair) and the second commit's reveal must be rejected
+    // by the defense-in-depth check at reveal time (audit M-2).
+    //
+    // Flow:
+    //   1. commit (A, B) at ledger N → commitment_id_1
+    //   2. advance to N + DEFAULT_COOLDOWN + 1 (so a second commit is legal)
+    //   3. commit (A, B) again → commitment_id_2. At this point
+    //      is_pair_spent is still false, so the commit-time gate passes.
+    //   4. advance to commitment_id_1's reveal window, reveal it →
+    //      mark_pair_spent fires.
+    //   5. advance further so commitment_id_2's reveal window is also
+    //      satisfied, reveal it → must fail with PairAlreadySpent.
+    let f = setup(0x47);
+    let user = Address::generate(&f.env);
+    let a = mint_genesis(&f, &user, 0, 0);
+    let b = mint_genesis(&f, &user, 1, 1);
+
+    // Step 1: first commit at "ledger N".
+    let n = f.env.ledger().sequence();
+    let commitment_id_1 = f.planet.commit_conjoin(&a, &b, &user, &200u64);
+
+    // Step 2: advance past the cooldown (DEFAULT_COOLDOWN = 720, hardcoded
+    // in lib.rs; bumping it would only loosen this test, never break it).
+    f.env.ledger().set_sequence_number(n + 721);
+
+    // Step 3: a second commit on the same pair is legal — cooldown elapsed,
+    // and commit-time `is_pair_spent` is still false because the first
+    // commit hasn't revealed yet. This is the dev's "we can't easily commit
+    // twice" assumption corrected: you can, you just have to wait out the
+    // cooldown between commits.
+    let commitment_id_2 = f.planet.commit_conjoin(&a, &b, &user, &200u64);
+
+    // Step 4: advance to satisfy the first commit's reveal delay (from N).
+    // The first commit's reveal-after-ledger is N + MIN_REVEAL_DELAY_LEDGERS;
+    // we're already at N+721, well past it. Reveal the first commitment →
+    // succeeds and marks SpentPair.
+    let child_1 = f.planet.reveal_conjoin(&commitment_id_1);
+    assert_eq!(f.planet.owner_of(&child_1), user);
+
+    // Step 5: advance to satisfy the second commit's reveal delay (from
+    // N+721). Then reveal the second commitment → defense-in-depth must
+    // reject with PairAlreadySpent.
+    f.env
+        .ledger()
+        .set_sequence_number(n + 721 + crate::MIN_REVEAL_DELAY_LEDGERS);
+
+    let err = f
+        .planet
+        .try_reveal_conjoin(&commitment_id_2)
+        .err()
+        .unwrap()
+        .unwrap();
+    assert_eq!(err, Error::PairAlreadySpent);
 }
