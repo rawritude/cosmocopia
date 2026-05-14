@@ -8,6 +8,8 @@ const balances = new Map<string, number>();
 const coordsMap = new Map<number, [number, number]>();
 const tokensInOrder: number[] = [];                            // global enumerable
 const ownerTokens = new Map<string, number[]>();               // per-owner enumerable
+const populationMap = new Map<number, number>();               // 0..5
+const civTierMap = new Map<number, number>();                  // 0..4
 const vitalsTemplate = {
   biomass: 128, gravity: 128, hydration: 128, last_ledger: 100, spirit: 160, temperature: 128,
 };
@@ -47,6 +49,14 @@ vi.mock('./planet-bindings/src/index', () => {
       }
       async coords_of({ id }: { id: number }) {
         return { result: ok(coordsMap.get(id) ?? [0, 0]) };
+      }
+      async population_of({ id }: { id: number }) {
+        if (!ownerMap.has(id)) throw new Error(`no pop ${id}`);
+        return { result: ok(populationMap.get(id) ?? 0) };
+      }
+      async civ_tier_of({ id }: { id: number }) {
+        if (!ownerMap.has(id)) throw new Error(`no civ ${id}`);
+        return { result: ok(civTierMap.get(id) ?? 0) };
       }
       async care(_args: any) {
         return { signAndSend: async () => ({ hash: 'TXHASH_CLASSIC' }) };
@@ -122,6 +132,8 @@ afterEach(() => {
   coordsMap.clear();
   tokensInOrder.length = 0;
   ownerTokens.clear();
+  populationMap.clear();
+  civTierMap.clear();
   vi.clearAllMocks();
 });
 
@@ -129,7 +141,15 @@ const OWNER = 'GBVK7HKPHCELHPVFTJRMGRL5ROWQ4FOWTK4HC66SIGW5Y4ZBZP2OUR2Z';
 const OTHER = 'GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ';
 
 // Helper: register a planet across all mock maps in one call.
-function seedPlanet(id: number, owner: string, x = 0, y = 0, dnaByte = 0x11) {
+function seedPlanet(
+  id: number,
+  owner: string,
+  x = 0,
+  y = 0,
+  dnaByte = 0x11,
+  population?: number,
+  civTier?: number,
+) {
   ownerMap.set(id, owner);
   dnaMap.set(id, new Uint8Array(32).fill(dnaByte));
   coordsMap.set(id, [x, y]);
@@ -138,6 +158,8 @@ function seedPlanet(id: number, owner: string, x = 0, y = 0, dnaByte = 0x11) {
   lst.push(id);
   ownerTokens.set(owner, lst);
   balances.set(owner, (balances.get(owner) ?? 0) + 1);
+  if (typeof population === 'number') populationMap.set(id, population);
+  if (typeof civTier === 'number') civTierMap.set(id, civTier);
 }
 
 describe('CARE enum', () => {
@@ -268,6 +290,44 @@ describe('submitConjoin (commit-reveal)', () => {
     expect(typeof id).toBe('number');
     const hash = await cc.submitRevealConjoin(id, wallet);
     expect(hash).toBe('TXHASH_REVEAL');
+  });
+});
+
+describe('on-chain population + civ_tier reads', () => {
+  it('getPlanet pulls population + civTier alongside the existing views', async () => {
+    seedPlanet(0, OWNER, 0, 0, 0x11, /* pop */ 4, /* civ */ 3);
+    const p = await cc.getPlanet(0);
+    expect(p).not.toBeNull();
+    expect(p!.population).toBe(4);
+    expect(p!.civTier).toBe(3);
+  });
+
+  it('getPlanet falls back to undefined when the contract calls error', async () => {
+    seedPlanet(0, OWNER);
+    const client = (await import('./planet-bindings/src/index')).Client;
+    const origPop = (client.prototype as any).population_of;
+    const origCiv = (client.prototype as any).civ_tier_of;
+    (client.prototype as any).population_of = async () => { throw new Error('rpc down'); };
+    (client.prototype as any).civ_tier_of = async () => { throw new Error('rpc down'); };
+    try {
+      const p = await cc.getPlanet(0);
+      expect(p).not.toBeNull();
+      // dna/vitals/coords still present:
+      expect(p!.dna.length).toBe(32);
+      expect(p!.coords).toEqual({ x: 0, y: 0 });
+      // pop/civ silently undefined when contract calls explode:
+      expect(p!.population).toBeUndefined();
+      expect(p!.civTier).toBeUndefined();
+    } finally {
+      (client.prototype as any).population_of = origPop;
+      (client.prototype as any).civ_tier_of = origCiv;
+    }
+  });
+
+  it('populationOf + civTierOf standalone readers unwrap u32 Result::Ok', async () => {
+    seedPlanet(7, OWNER, 0, 0, 0x11, 2, 4);
+    expect(await cc.populationOf(7)).toBe(2);
+    expect(await cc.civTierOf(7)).toBe(4);
   });
 });
 

@@ -62,6 +62,15 @@ export type SceneInputs = {
     biomass: number;
     spirit: number;
   };
+  /// Optional on-chain population index 0..5 (from `population_of`). When
+  /// provided, overrides the local `derivePopulation(dna)` heuristic so the
+  /// scene matches what the contract actually stored. Undefined for legacy
+  /// planets or pre-pop-civ contract versions; we fall back to the local
+  /// derivation in that case.
+  population?: number;
+  /// Optional on-chain civ tier 0..4 (from `civ_tier_of`). Same fallback
+  /// semantics as `population`.
+  civTier?: number;
 };
 
 export type SceneSeed = {
@@ -112,8 +121,19 @@ export type Inhabitant = {
 
 export function buildScene(inputs: SceneInputs): SceneSeed {
   const dna = inputs.dna instanceof Uint8Array ? parseDna(inputs.dna) : inputs.dna;
-  const population = derivePopulation(dna);
-  const civTier = deriveCivTier(inputs.vitals);
+
+  // Prefer the on-chain values when the caller provided them, otherwise fall
+  // back to the local derivations that worked before pop + civ_tier moved on
+  // chain. Bounds-clamp so a misbehaved contract response can't index OOB.
+  const population: Population =
+    typeof inputs.population === 'number' && inputs.population >= 0
+      ? POPULATIONS[inputs.population % POPULATIONS.length]
+      : derivePopulation(dna);
+  const civTier: CivTier =
+    typeof inputs.civTier === 'number' && inputs.civTier >= 0
+      ? CIV_TIERS[Math.min(inputs.civTier, CIV_TIERS.length - 1)]
+      : deriveCivTier(inputs.vitals);
+
   const rng = seededRng(dna.raw);
   const palette = paletteFor(dna);
 

@@ -29,7 +29,12 @@ export default function PlanetView({
     const ctx = canvasRef.current?.getContext('2d');
     if (!ctx) return;
 
-    const seed = buildScene({ dna: planet.dna, vitals: planet.vitals });
+    const seed = buildScene({
+      dna: planet.dna,
+      vitals: planet.vitals,
+      population: planet.population,
+      civTier: planet.civTier,
+    });
     const off = document.createElement('canvas');
     off.width = SCENE_W;
     off.height = SCENE_H;
@@ -56,7 +61,7 @@ export default function PlanetView({
     };
     handle = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(handle);
-  }, [planet.dna, planet.vitals]);
+  }, [planet.dna, planet.vitals, planet.population, planet.civTier]);
 
   const seed = buildScene({ dna: planet.dna, vitals: planet.vitals });
 

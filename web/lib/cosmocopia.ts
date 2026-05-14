@@ -35,6 +35,12 @@ export type Planet = {
   vitals: Vitals;
   coords: { x: number; y: number };
   owner?: string;
+  /// On-chain population index 0..5. Set by `getPlanet` from `population_of`.
+  /// Undefined only if the contract call failed for some non-fatal reason
+  /// (e.g. the contract was downgraded to a pre-pop version).
+  population?: number;
+  /// On-chain civ tier 0..4 from `civ_tier_of`. Same caveat as `population`.
+  civTier?: number;
 };
 
 // ---------------------------------------------------------------------------
@@ -116,23 +122,51 @@ export async function listOwnedPlanets(address: string): Promise<Planet[]> {
 export async function getPlanet(id: number): Promise<Planet | null> {
   const client = readClient();
   try {
-    const [dnaTx, vitalsTx, coordsTx] = await Promise.all([
+    // Pull every view in parallel — pop + civ_tier are non-fatal: if the
+    // bindings are stale or the contract hasn't shipped those views yet,
+    // we fall back to undefined and let the consumer derive locally.
+    const [dnaTx, vitalsTx, coordsTx, popTx, civTx] = await Promise.all([
       client.dna_of({ id }),
       client.vitals_of({ id }),
       client.coords_of({ id }),
+      client.population_of({ id }).catch(() => null),
+      client.civ_tier_of({ id }).catch(() => null),
     ]);
     const dnaBuf = unwrapResult<Buffer | Uint8Array>(dnaTx.result);
     const vitals = unwrapResult<Vitals>(vitalsTx.result);
     const [x, y] = unwrapResult<readonly [number, number]>(coordsTx.result);
+
+    // Each is Result<u32> — unwrap defensively so a transient Err on one
+    // doesn't blow up the whole planet read.
+    let population: number | undefined;
+    let civTier: number | undefined;
+    try { if (popTx) population = Number(unwrapResult<number | bigint>(popTx.result)); } catch { /* leave undefined */ }
+    try { if (civTx) civTier = Number(unwrapResult<number | bigint>(civTx.result)); } catch { /* leave undefined */ }
+
     return {
       id,
       dna: new Uint8Array(dnaBuf),
       vitals,
       coords: { x, y },
+      population,
+      civTier,
     };
   } catch {
     return null;
   }
+}
+
+/// Standalone reader for the on-chain population (0..5). Use when you only
+/// need population, not the full Planet record (e.g. an event-stream handler).
+export async function populationOf(id: number): Promise<number> {
+  const r = await readClient().population_of({ id });
+  return Number(unwrapResult<number | bigint>(r.result));
+}
+
+/// Standalone reader for the on-chain civ tier (0..4).
+export async function civTierOf(id: number): Promise<number> {
+  const r = await readClient().civ_tier_of({ id });
+  return Number(unwrapResult<number | bigint>(r.result));
 }
 
 // ---------------------------------------------------------------------------
