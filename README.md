@@ -71,7 +71,7 @@ Population is derived from DNA byte 18; civ tier from `(temperature + biomass + 
 
 ![Galaxy map](docs/galaxy.png)
 
-*The `/galaxy` page is a live 2D map of every minted planet at its on-chain `(x, y)`. Concentric dashed rings mark the five sectors; the same `r²` thresholds drive [`stats::project`](contracts/planet/src/stats.rs) so a planet's location actually shapes its decay. Pan with drag, zoom with the wheel, click a planet for stats + DNA + owner.*
+*The `/galaxy` page is a **full-bleed stage** — the canvas fills the viewport edge-to-edge. SECTORS legend floats top-right; selected-planet detail surfaces bottom-right when you click a planet. Tiny uppercase hint chip in the bottom-left reports the planet count + controls. Concentric dashed rings mark the five sectors; the same `r²` thresholds drive [`stats::project`](contracts/planet/src/stats.rs) so a planet's location actually shapes its decay. Pan with drag, zoom with the wheel.*
 
 Each planet has `(x, y)` coordinates in an integer grid. The grid is partitioned into five **sectors** that each apply stat drift modifiers (boundaries are `r²` thresholds — integer math, no sqrt — see [`galaxy::sector_of`](contracts/planet/src/galaxy.rs)):
 
@@ -84,6 +84,12 @@ Each planet has `(x, y)` coordinates in an integer grid. The grid is partitioned
 | *Outer Dark* | ∞ | (−2, −1, −1, −1, −1) — harsh, exotic |
 
 Distance between two parents sets the **conjunction cost** (not yet implemented — see roadmap) and, indirectly, the mutation rate. Two neighbours yield cheap, conservative children; opposites yield expensive, exotic ones.
+
+### Conjunction page
+
+![Conjunction page](docs/conjunction.png)
+
+*The `/conjunction` page is a dedicated 5-column compose: **parent A + parent B = child**. Empty parent slots are dashed-border drop targets; the child slot previews the midpoint coordinate and reminds you that the art is sealed until reveal. Below the grid, a COMMIT-REVEAL panel houses the big primary CONJOIN button and surfaces the live phase (`committing → waiting (N ledgers) → revealing → done`). The candidate gallery at the bottom is click-to-slot — pick two and the button enables.*
 
 ## DNA layout (32 visible + 32 latent bytes)
 
@@ -138,18 +144,19 @@ cosmocopia/
 │   ├── Cosmocopia Web UI Kit.html  # canonical design reference (rendered to globals.css)
 │   ├── app/
 │   │   ├── layout.tsx          # mounts <TopNav/> + fonts preconnect
-│   │   ├── page.tsx            # home — hero HUD, tinker, traits, gallery
-│   │   ├── galaxy/page.tsx     # /galaxy map
+│   │   ├── page.tsx            # /        home — hero HUD, tinker, traits, gallery
+│   │   ├── galaxy/page.tsx     # /galaxy  full-bleed stage + floating panels
+│   │   ├── conjunction/page.tsx # /conjunction — parent A + parent B = child compose
 │   │   └── globals.css         # design system tokens + UI kit primitives
 │   ├── components/
-│   │   ├── TopNav.tsx          # sticky kit-tabs (HOME/GALAXY/CONJUNCTION)
-│   │   ├── OwnedPlanets.tsx    # owned-planet gallery + conjoin picker
+│   │   ├── TopNav.tsx          # sticky .kit-tabs (HOME/GALAXY/CONJUNCTION) with active-route highlight
+│   │   ├── OwnedPlanets.tsx    # owned-planet gallery + inline conjoin picker (home)
 │   │   ├── PlanetSprite.tsx    # canvas planet + tier animation overlay
 │   │   ├── PlanetView.tsx      # surface modal — animated side-scene
 │   │   ├── RarityBadge.tsx     # tier pill + tooltip with score breakdown
-│   │   ├── GalaxyMap.tsx       # 2D map at /galaxy
+│   │   ├── GalaxyMap.tsx       # 2D map at /galaxy (uses .galaxy-stage + .floating-panel)
 │   │   ├── Traits.tsx          # DNA trait readout
-│   │   └── ConnectButton.tsx   # passkey + Wallets Kit chooser
+│   │   └── ConnectButton.tsx   # passkey + Wallets Kit chooser, renders .chip when connected
 │   └── lib/
 │       ├── cosmocopia.ts       # high-level read/write + commit-reveal orchestration
 │       ├── wallet-context.tsx  # dual-wallet state (passkey + classic)
@@ -249,7 +256,8 @@ CI workflow: `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test`, `ste
 - [x] Contract unit tests — DNA crossover, auth gates, cooldown, healthy gate, commit-reveal flow, dominance roll
 - [x] Pixel-art TS renderer — DNA → 64×64 sprite
 - [x] Next.js frontend with dual-wallet sign-in (Smart Account Kit + Stellar Wallets Kit)
-- [x] Galaxy map at `/galaxy` — pan / zoom / click-to-inspect
+- [x] Galaxy map at `/galaxy` — pan / zoom / click-to-inspect, full-bleed stage + floating sector legend + selected-planet detail
+- [x] Conjunction page at `/conjunction` — parent A + parent B = child compose grid with commit-reveal progress meter
 - [x] Testnet deploy script + genesis seeding via commit-reveal
 - [x] **Commit-reveal mint** — anti-grinding two-step flow with strict reveal-delay guarantee
 - [x] **NonFungibleEnumerable** — `total_supply` / `get_token_id` / `get_owner_token_id`, no more brute-force scanning
@@ -258,7 +266,7 @@ CI workflow: `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test`, `ste
 - [x] **Rarity tier system** — Common→Mystic with tier-driven sprite animations + tier badges
 - [x] **Planet view (surface)** — side-scene composer (population × civ tier × care state), animated inhabitants
 - [x] **D/R1/R2 dominance** — per-trait allele inheritance with sticky R2 carry-forward, mutation gate, `RecessiveEmerged` event
-- [x] **Cosmocopia Web UI Kit** — brutalist design system ported to `globals.css` + components
+- [x] **Cosmocopia Web UI Kit** — brutalist design system ported to `globals.css` + components, applied across all three routes (home / galaxy / conjunction) with solid-green panel title bars, hard offset shadows, top tab nav, hero HUD, and floating-panel galaxy stage
 - [x] Three audits (contract + game design + design system) — top Mediums closed in code
 - [x] CI — fmt, clippy, cargo test, art tests, vitest, web build, wasm size guard
 - [x] Testnet redeploy at [`CB2YFH74…CKDK`](https://stellar.expert/explorer/testnet/contract/CB2YFH74ZJDTWELOVK4JYL5LP4A6LCTPSDTDWIFDUDERXV2TPZ7UCKDK) carrying every fix above
