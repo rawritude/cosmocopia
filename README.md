@@ -72,7 +72,7 @@ Every planet card has a **`visit surface →`** button that opens a side-view sc
 - **Buildings** — style varies by population (Humanoid / Aquatic / Avian / Crystalline / Subterranean / Hive — 6 types) and civ tier (Primitive → Agricultural → Industrial → Information → Spacefaring — 5 stages). Height + count grow with civ tier.
 - **Inhabitants** — 2×2 silhouettes that walk / fly / swim / burrow depending on population, with footstep bobs and wing-flap animations.
 
-For v1 both population and civ tier are derived in the frontend (`art/src/scene.ts`): population from DNA byte 18 mod 6; civ tier from `(temperature + biomass + spirit) / 3`. The `contract-pop-civ` branch (in flight) promotes both on-chain — population becomes a real `D/R1/R2` allele triple in the latent blob, and civ tier becomes a per-planet `u8` that ratchets up via care + decays on neglect, with a class-aware signal so Crystal / Hollow / Void can also reach Spacefaring.
+Both **population** and **civ_tier** are now on-chain. Population is a D/R1/R2 allele triple in the latent blob (bytes 16/17/18); the public `latent[16] % 6` gives the visible population type 0..5. civ_tier is a per-planet `u8` stored under `DataKey::CivTier(id)`, ratchets up on `care` once `stats::civ_signal(vitals, class)` crosses a 51-point threshold (class-aware — Crystal/Hollow/Void all have inverted-thriving profiles so they can reach Spacefaring too). New views: `population_of(id)`, `civ_tier_of(id)`. New events: `PopulationExpressed`, `CivTierChanged`. The frontend `scene.ts` derivations still apply for legacy planets and as a local cache; cutover to live contract reads is a follow-up PR.
 
 ### Galaxy
 
@@ -246,11 +246,11 @@ The visual language is captured in [`web/Cosmocopia Web UI Kit.html`](web/Cosmoc
 
 ## Live deployment
 
-Contract: [`CB2YFH74ZJDTWELOVK4JYL5LP4A6LCTPSDTDWIFDUDERXV2TPZ7UCKDK`](https://stellar.expert/explorer/testnet/contract/CB2YFH74ZJDTWELOVK4JYL5LP4A6LCTPSDTDWIFDUDERXV2TPZ7UCKDK) on Stellar testnet. Carries the D/R1/R2 dominance allele system, audit fixes M1–M4 + L4 + I5, game-audit F2/F9, and the `RecessiveEmerged` event. WASM 41 KB (under the 50 KB CI gate).
+Contract: [`CBIWWHZH67EATB5P4OEXDKWSY6NRGE6MTQGWIXJVYJKQKMSL265FSPWV`](https://stellar.expert/explorer/testnet/contract/CBIWWHZH67EATB5P4OEXDKWSY6NRGE6MTQGWIXJVYJKQKMSL265FSPWV) on Stellar testnet. Carries the D/R1/R2 dominance allele system + audit fixes M1–M4 + L4 + I5 + game-audit F2/F9, plus the **Population gene** (D/R1/R2 at latent 16/17/18) and **civ_tier** (class-aware ratchet via `stats::civ_signal`, closes game-audit F15) and audit-M2 legacy-parent population synthesis. New views `population_of(id)` / `civ_tier_of(id)`. New events `PopulationExpressed` + `CivTierChanged` + `RecessiveEmerged`. WASM 44 KB (under the 50 KB CI gate).
 
 Drand verifier: [`CAESC7SC5EW5P2P3IM5Q7E64ZNDATVSN5F57NTCH5E7GJRPDM76KF7QM`](https://stellar.expert/explorer/testnet/contract/CAESC7SC5EW5P2P3IM5Q7E64ZNDATVSN5F57NTCH5E7GJRPDM76KF7QM).
 
-Tests: **40 contract** (Rust, soroban-sdk testutils — dominance roll, latent storage, commit-reveal, cooldown, healthy-factor gate, audit-Medium pins) + **17 frontend** (Vitest, mocked Client + wallet kits — commit-reveal orchestration, listOwned, unwrap, latestDrandRound) + **43 art renderer** (Node test runner — deterministic render, DNA layout parity, rarity scorer + distribution, scene composer + day/night). All green in CI.
+Tests: **48 contract** (Rust, soroban-sdk testutils — dominance roll, latent storage, commit-reveal, cooldown, healthy-factor gate, audit-Medium pins, population dominance, civ_tier ratchet, class-aware F15 closure, legacy-parent population synthesis) + **17 frontend** (Vitest, mocked Client + wallet kits) + **43 art renderer** (Node test runner — deterministic render, DNA layout parity, rarity scorer + distribution, scene composer + day/night). All green in CI.
 
 CI workflow: `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test`, `stellar contract build` with 50 KB WASM size guard, art tests, vitest, `npx tsc --noEmit` on the generated bindings, full `next build`.
 
@@ -276,7 +276,9 @@ CI workflow: `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test`, `ste
 - [x] **Cosmocopia Web UI Kit** — brutalist design system ported to `globals.css` + components, applied across all three routes (home / galaxy / conjunction) with solid-green panel title bars, hard offset shadows, top tab nav, hero HUD, and floating-panel galaxy stage
 - [x] Three audits (contract + game design + design system) — top Mediums closed in code
 - [x] CI — fmt, clippy, cargo test, art tests, vitest, web build, wasm size guard
-- [x] Testnet redeploy at [`CB2YFH74…CKDK`](https://stellar.expert/explorer/testnet/contract/CB2YFH74ZJDTWELOVK4JYL5LP4A6LCTPSDTDWIFDUDERXV2TPZ7UCKDK) carrying every fix above
+- [x] **Population gene on-chain** — D/R1/R2 alleles at `latent[16/17/18]`, `population_of(id)` view, `PopulationExpressed` event, legacy-parent population synthesis (audit M-2 fix)
+- [x] **civ_tier on-chain** — additive `DataKey::CivTier(u32)` storage, `stats::civ_signal` class-aware table closes game-audit F15 (Crystal/Hollow/Void can now reach Spacefaring), ratchet-only on `care`, `civ_tier_of(id)` view, `CivTierChanged` event
+- [x] Testnet redeploy at [`CBIWWHZH…FSPWV`](https://stellar.expert/explorer/testnet/contract/CBIWWHZH67EATB5P4OEXDKWSY6NRGE6MTQGWIXJVYJKQKMSL265FSPWV) carrying every fix above
 
 ### Open
 
