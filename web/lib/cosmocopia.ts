@@ -41,6 +41,12 @@ export type Planet = {
   population?: number;
   /// On-chain civ tier 0..4 from `civ_tier_of`. Same caveat as `population`.
   civTier?: number;
+  /// Phase 1 First Light: soulbound flag. Undefined ⇒ contract didn't
+  /// expose `is_soulbound_of` (legacy contract).
+  soulbound?: boolean;
+  /// Phase 1 First Light: ledger at which the healthy streak started, or 0
+  /// when out of band. Undefined ⇒ contract didn't expose the view.
+  healthySince?: number;
 };
 
 // ---------------------------------------------------------------------------
@@ -122,17 +128,21 @@ export async function listOwnedPlanets(address: string): Promise<Planet[]> {
 export async function getPlanet(id: number): Promise<Planet | null> {
   const client = readClient();
   try {
-    // Pull every view in parallel — pop, civ_tier, and owner_of are non-fatal:
+    // Pull every view in parallel — pop, civ_tier, owner_of, and the Phase 1
+    // First Light views (`is_soulbound_of`, `healthy_since_of`) are non-fatal:
     // if the bindings are stale or the contract hasn't shipped those views
     // yet, we fall back to undefined and let the consumer derive locally.
-    const [dnaTx, vitalsTx, coordsTx, popTx, civTx, ownerTx] = await Promise.all([
-      client.dna_of({ id }),
-      client.vitals_of({ id }),
-      client.coords_of({ id }),
-      client.population_of({ id }).catch(() => null),
-      client.civ_tier_of({ id }).catch(() => null),
-      client.owner_of({ token_id: id }).catch(() => null),
-    ]);
+    const [dnaTx, vitalsTx, coordsTx, popTx, civTx, ownerTx, soulTx, hsTx] =
+      await Promise.all([
+        client.dna_of({ id }),
+        client.vitals_of({ id }),
+        client.coords_of({ id }),
+        client.population_of({ id }).catch(() => null),
+        client.civ_tier_of({ id }).catch(() => null),
+        client.owner_of({ token_id: id }).catch(() => null),
+        client.is_soulbound_of({ id }).catch(() => null),
+        client.healthy_since_of({ id }).catch(() => null),
+      ]);
     const dnaBuf = unwrapResult<Buffer | Uint8Array>(dnaTx.result);
     const vitals = unwrapResult<Vitals>(vitalsTx.result);
     const [x, y] = unwrapResult<readonly [number, number]>(coordsTx.result);
@@ -143,9 +153,13 @@ export async function getPlanet(id: number): Promise<Planet | null> {
     let population: number | undefined;
     let civTier: number | undefined;
     let owner: string | undefined;
+    let soulbound: boolean | undefined;
+    let healthySince: number | undefined;
     try { if (popTx) population = Number(unwrapResult<number | bigint>(popTx.result)); } catch { /* leave undefined */ }
     try { if (civTx) civTier = Number(unwrapResult<number | bigint>(civTx.result)); } catch { /* leave undefined */ }
     try { if (ownerTx) owner = ownerTx.result as unknown as string; } catch { /* leave undefined */ }
+    try { if (soulTx) soulbound = Boolean(soulTx.result); } catch { /* leave undefined */ }
+    try { if (hsTx) healthySince = Number(hsTx.result); } catch { /* leave undefined */ }
 
     return {
       id,
@@ -155,6 +169,8 @@ export async function getPlanet(id: number): Promise<Planet | null> {
       population,
       civTier,
       owner,
+      soulbound,
+      healthySince,
     };
   } catch {
     return null;
@@ -270,6 +286,115 @@ export async function latestDrandRound(): Promise<bigint> {
 }
 
 // ---------------------------------------------------------------------------
+// First Light claim-reveal flow (Phase 1 onboarding).
+//
+// `claim_first_light` debits 10 XLM from the keeper and stashes a commit;
+// after MIN_REVEAL_DELAY_LEDGERS (~40 s) the reveal mints a Common-tier,
+// soulbound planet at an Outer-Dark coord. `submitFirstLight` orchestrates
+// both halves with a polling wait between, mirroring `submitConjoin`.
+// ---------------------------------------------------------------------------
+
+export type FirstLightProgress =
+  | { phase: 'committing' }
+  | {
+      phase: 'waiting';
+      commitmentId: number;
+      revealAfterLedger: number;
+      currentLedger: number;
+    }
+  | { phase: 'revealing'; commitmentId: number }
+  | { phase: 'done'; tokenTxHash: string };
+
+/// Read the soulbound flag for a token. Off-chain view; never mutates state.
+export async function isSoulbound(id: number): Promise<boolean> {
+  const r = await readClient().is_soulbound_of({ id });
+  return Boolean(r.result);
+}
+
+/// Read the ledger at which `id`'s healthy streak started, or 0 if not
+/// currently in-band. Used by the SOULBOUND chip to compute the countdown.
+export async function healthySinceOf(id: number): Promise<number> {
+  const r = await readClient().healthy_since_of({ id });
+  return Number(r.result);
+}
+
+/// Read whether `keeper` has already claimed First Light.
+export async function firstLightClaimed(keeper: string): Promise<boolean> {
+  const r = await readClient().first_light_claimed({ keeper });
+  return Boolean(r.result);
+}
+
+/// Read the current distribution-pool balance (Phase 4 accumulator).
+export async function distributionPool(): Promise<bigint> {
+  const r = await readClient().distribution_pool();
+  // The bindings type `result` as `i128` (bigint).
+  return typeof r.result === 'bigint' ? r.result : BigInt(r.result ?? 0);
+}
+
+/// Drive the First Light claim+reveal end-to-end. `onProgress` fires on
+/// every phase change so the UI can render status. Returns the reveal tx
+/// hash on success.
+export async function submitFirstLight(
+  wallet: WalletState,
+  onProgress?: (p: FirstLightProgress) => void,
+): Promise<string> {
+  if (wallet.status !== 'connected') throw new Error('connect a wallet first');
+
+  // Phase 1: commit (10 XLM debit + commitment write).
+  onProgress?.({ phase: 'committing' });
+  const observedRound = await latestDrandRound();
+  const commitmentId = await submitClaimFirstLight(observedRound, wallet);
+
+  // Phase 2: poll revealAfter — the contract requires the ledger to advance
+  // past commit_ledger + MIN_REVEAL_DELAY_LEDGERS before reveal will accept.
+  const revealAfter = await fetchRevealAfter(commitmentId);
+  while (true) {
+    const cur = await fetchCurrentLedger();
+    onProgress?.({
+      phase: 'waiting',
+      commitmentId,
+      revealAfterLedger: revealAfter,
+      currentLedger: cur,
+    });
+    if (cur >= revealAfter) break;
+    await sleep(3000);
+  }
+
+  // Phase 3: reveal (mint).
+  onProgress?.({ phase: 'revealing', commitmentId });
+  const txHash = await submitRevealFirstLight(commitmentId, wallet);
+  onProgress?.({ phase: 'done', tokenTxHash: txHash });
+  return txHash;
+}
+
+/// Just the claim half. Useful for UIs that want to defer the reveal.
+export async function submitClaimFirstLight(
+  observedRound: bigint,
+  wallet: WalletState,
+): Promise<number> {
+  if (wallet.status !== 'connected') throw new Error('connect a wallet first');
+  const tx = await (await writerClient(wallet)).claim_first_light({
+    keeper: wallet.address,
+    observed_round: observedRound,
+  });
+  const result = await sendTx(tx, wallet);
+  const value = (result as any)?.result;
+  return typeof value === 'number' ? value : Number(value ?? 0);
+}
+
+/// Just the reveal half.
+export async function submitRevealFirstLight(
+  commitmentId: number,
+  wallet: WalletState,
+): Promise<string> {
+  if (wallet.status !== 'connected') throw new Error('connect a wallet first');
+  const tx = await (await writerClient(wallet)).reveal_first_light({
+    id: commitmentId,
+  });
+  return extractHash(await sendTx(tx, wallet));
+}
+
+// ---------------------------------------------------------------------------
 // Commit-reveal flow for conjoin (audit Critical #1/#2)
 //
 // The contract no longer accepts a direct `conjoin(round)` — it requires the
@@ -281,6 +406,41 @@ export async function latestDrandRound(): Promise<bigint> {
 // Match the contract's compile-time constants. If these change in the
 // contract, bump them here.
 export const COMMIT_LOOKAHEAD_ROUNDS = 10n;
+/// 7 days at ~5 s/ledger — the window of consistent healthy care that clears
+/// a soulbound flag (matches SOULBOUND_RELEASE_LEDGERS in lib.rs).
+export const SOULBOUND_RELEASE_LEDGERS = 120_960;
+/// Stroops per XLM (1 XLM = 10^7 stroops).
+export const STROOPS_PER_XLM = 10_000_000n;
+/// 10 XLM First Light fee in stroops (matches FIRST_LIGHT_FEE_STROOPS).
+export const FIRST_LIGHT_FEE_STROOPS = 10n * STROOPS_PER_XLM;
+/// Stellar ledger cadence assumption used by the contract's 7-day window.
+export const SECONDS_PER_LEDGER = 5;
+
+/// Build the SOULBOUND chip's hover text. Pure function — extracted so it
+/// can be unit-tested without a DOM. Inputs:
+///   - `healthySince`: token's `healthy_since_of` value (0 ⇒ paused timer).
+///   - `currentLedger`: optional current ledger seq, used to compute the
+///     remaining countdown. When omitted we surface a static description.
+export function soulboundTooltip(
+  healthySince: number,
+  currentLedger?: number,
+): string {
+  if (healthySince === 0) {
+    return 'Soulbound. The 7-day timer is paused — bring vitals into the 40-220 band.';
+  }
+  if (!currentLedger) {
+    return 'Soulbound. Releases after 7d of consistent care, or on first conjunction.';
+  }
+  const elapsed = Math.max(0, currentLedger - healthySince);
+  const remaining = Math.max(0, SOULBOUND_RELEASE_LEDGERS - elapsed);
+  if (remaining === 0) {
+    return 'Soulbound timer met. Next care call will release.';
+  }
+  const secs = remaining * SECONDS_PER_LEDGER;
+  const days = Math.floor(secs / 86_400);
+  const hours = Math.floor((secs % 86_400) / 3600);
+  return `Releases in ${days}d ${hours}h via care, or on first conjunction.`;
+}
 
 export type ConjoinProgress =
   | { phase: 'committing' }

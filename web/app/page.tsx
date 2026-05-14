@@ -5,6 +5,7 @@ import Link from 'next/link';
 import PlanetSprite from '../components/PlanetSprite';
 import Traits from '../components/Traits';
 import ConnectButton from '../components/ConnectButton';
+import FirstLightPanel from '../components/FirstLightPanel';
 import OwnedPlanets from '../components/OwnedPlanets';
 import { WalletProvider } from '../lib/wallet-context';
 import { dnaToHex } from '@cosmocopia/art';
@@ -95,6 +96,8 @@ function PageInner() {
           </div>
         </div>
       </header>
+
+      <FirstLightPanel />
 
       <OwnedPlanets />
 

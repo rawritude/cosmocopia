@@ -10,6 +10,10 @@ const tokensInOrder: number[] = [];                            // global enumera
 const ownerTokens = new Map<string, number[]>();               // per-owner enumerable
 const populationMap = new Map<number, number>();               // 0..5
 const civTierMap = new Map<number, number>();                  // 0..4
+const soulboundMap = new Map<number, boolean>();               // First Light
+const healthySinceMap = new Map<number, number>();             // First Light
+const firstLightClaimedMap = new Map<string, boolean>();       // by keeper
+const distributionPoolValue = { value: 0n };                    // i128 mirror
 const vitalsTemplate = {
   biomass: 128, gravity: 128, hydration: 128, last_ledger: 100, spirit: 160, temperature: 128,
 };
@@ -57,6 +61,27 @@ vi.mock('./planet-bindings/src/index', () => {
       async civ_tier_of({ id }: { id: number }) {
         if (!ownerMap.has(id)) throw new Error(`no civ ${id}`);
         return { result: ok(civTierMap.get(id) ?? 0) };
+      }
+      async is_soulbound_of({ id }: { id: number }) {
+        // Phase 1 First Light flag. Mirrors the contract's bool default.
+        return { result: soulboundMap.get(id) ?? false };
+      }
+      async healthy_since_of({ id }: { id: number }) {
+        return { result: healthySinceMap.get(id) ?? 0 };
+      }
+      async first_light_claimed({ keeper }: { keeper: string }) {
+        return { result: firstLightClaimedMap.get(keeper) ?? false };
+      }
+      async distribution_pool() {
+        return { result: distributionPoolValue.value };
+      }
+      async claim_first_light(_args: any) {
+        return {
+          signAndSend: async () => ({ result: 7, hash: 'TXHASH_CLAIM_FL' }),
+        };
+      }
+      async reveal_first_light(_args: any) {
+        return { signAndSend: async () => ({ hash: 'TXHASH_REVEAL_FL' }) };
       }
       async care(_args: any) {
         return { signAndSend: async () => ({ hash: 'TXHASH_CLASSIC' }) };
@@ -134,6 +159,10 @@ afterEach(() => {
   ownerTokens.clear();
   populationMap.clear();
   civTierMap.clear();
+  soulboundMap.clear();
+  healthySinceMap.clear();
+  firstLightClaimedMap.clear();
+  distributionPoolValue.value = 0n;
   vi.clearAllMocks();
 });
 
@@ -328,6 +357,98 @@ describe('on-chain population + civ_tier reads', () => {
     seedPlanet(7, OWNER, 0, 0, 0x11, 2, 4);
     expect(await cc.populationOf(7)).toBe(2);
     expect(await cc.civTierOf(7)).toBe(4);
+  });
+});
+
+describe('submitFirstLight (claim-reveal)', () => {
+  const wallet = {
+    status: 'connected',
+    kind: 'classic',
+    address: OWNER,
+    label: 'Freighter',
+  } as any;
+
+  it('refuses when not connected', async () => {
+    await expect(
+      cc.submitFirstLight({ status: 'idle' } as any),
+    ).rejects.toThrow(/connect a wallet/i);
+  });
+
+  it('drives committing → waiting → revealing → done and returns the reveal tx hash', async () => {
+    const phases: string[] = [];
+    const hash = await cc.submitFirstLight(wallet, (p) => phases.push(p.phase));
+    expect(hash).toBe('TXHASH_REVEAL_FL');
+    expect(phases[0]).toBe('committing');
+    expect(phases).toContain('revealing');
+    expect(phases.at(-1)).toBe('done');
+  });
+
+  it('exposes submitClaimFirstLight / submitRevealFirstLight as separate halves', async () => {
+    const id = await cc.submitClaimFirstLight(42n, wallet);
+    expect(typeof id).toBe('number');
+    const hash = await cc.submitRevealFirstLight(id, wallet);
+    expect(hash).toBe('TXHASH_REVEAL_FL');
+  });
+
+  it('firstLightClaimed reads the per-keeper flag', async () => {
+    expect(await cc.firstLightClaimed(OWNER)).toBe(false);
+    firstLightClaimedMap.set(OWNER, true);
+    expect(await cc.firstLightClaimed(OWNER)).toBe(true);
+  });
+
+  it('getPlanet pulls soulbound + healthySince from the new views', async () => {
+    seedPlanet(11, OWNER, -55, 55, 0x44, 0, 0);
+    soulboundMap.set(11, true);
+    healthySinceMap.set(11, 9_000_000);
+    const p = await cc.getPlanet(11);
+    expect(p).not.toBeNull();
+    expect(p!.soulbound).toBe(true);
+    expect(p!.healthySince).toBe(9_000_000);
+  });
+
+  it('getPlanet leaves soulbound + healthySince undefined when views fail', async () => {
+    seedPlanet(12, OWNER);
+    const Client = (await import('./planet-bindings/src/index')).Client;
+    const origSb = (Client.prototype as any).is_soulbound_of;
+    const origHs = (Client.prototype as any).healthy_since_of;
+    (Client.prototype as any).is_soulbound_of = async () => {
+      throw new Error('rpc down');
+    };
+    (Client.prototype as any).healthy_since_of = async () => {
+      throw new Error('rpc down');
+    };
+    try {
+      const p = await cc.getPlanet(12);
+      expect(p).not.toBeNull();
+      expect(p!.soulbound).toBeUndefined();
+      expect(p!.healthySince).toBeUndefined();
+    } finally {
+      (Client.prototype as any).is_soulbound_of = origSb;
+      (Client.prototype as any).healthy_since_of = origHs;
+    }
+  });
+});
+
+describe('soulboundTooltip (SOULBOUND chip copy)', () => {
+  it('says timer is paused when healthySince=0', () => {
+    expect(cc.soulboundTooltip(0)).toMatch(/timer is paused/i);
+  });
+
+  it('static description when no currentLedger is supplied', () => {
+    expect(cc.soulboundTooltip(1000)).toMatch(/Releases after 7d of consistent care/i);
+  });
+
+  it('renders a Xd Yh countdown when given currentLedger', () => {
+    const start = 1000;
+    const half = Math.floor(cc.SOULBOUND_RELEASE_LEDGERS / 2);
+    expect(cc.soulboundTooltip(start, start + half)).toMatch(/Releases in 3d/);
+  });
+
+  it('says timer met once the full window has elapsed', () => {
+    const start = 1000;
+    expect(
+      cc.soulboundTooltip(start, start + cc.SOULBOUND_RELEASE_LEDGERS),
+    ).toMatch(/timer met/i);
   });
 });
 
