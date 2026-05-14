@@ -1355,7 +1355,7 @@ fn update_healthy_since(e: &Env, id: u32, v: &Vitals, now: u32) {
 ///      (`min(3, max(0, count - 1)) = 0`).
 ///  10. Ring count (byte 1 low 3 bits) capped at 2 → 0 points
 ///      (`min(4, max(0, count - 2)) = 0`).
-fn clamp_first_light_dna(e: &Env, dna: &BytesN<32>) -> BytesN<32> {
+pub(crate) fn clamp_first_light_dna(e: &Env, dna: &BytesN<32>) -> BytesN<32> {
     let mut out = dna.to_array();
 
     // 1. Rarity nibble.

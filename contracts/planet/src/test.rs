@@ -1323,30 +1323,157 @@ fn first_light_coord_unique() {
 }
 
 #[test]
-fn first_light_tier_capped_at_common() {
-    // For 8 different seeds, the contract's clamped DNA byte 17's rarity
-    // nibble must stay <= FIRST_LIGHT_RARITY_CAP, and the class must never
-    // be one of the mythic indices (14 / 15).
-    for seed in [0x11u8, 0x33, 0x55, 0x77, 0x99, 0xBB, 0xDD, 0xFF] {
-        let f = setup(seed);
-        let keeper = Address::generate(&f.env);
-        let id = claim_first_light(&f, &keeper);
-        let dna = f.planet.dna_of(&id).to_array();
-        let rarity = dna[dna::IDX_AFFINITY_RARITY] & 0x0F;
+fn first_light_dna_stays_common_across_seed_sweep() {
+    // Audit C-1 / H-1: the previous test (`first_light_tier_capped_at_common`)
+    // only checked rarity-nibble + class. That left every other rarity-scoring
+    // byte (atmosphere/feature/aura/moons/rings) un-asserted, so the test
+    // passed while the Common-tier floor was actually broken.
+    //
+    // This sweep calls `clamp_first_light_dna` directly with `[s; 32]` for
+    // every byte value s in 0..=0xFF (the full mock-drand seed space the
+    // fixture configures) and asserts that every byte the scorer reads has
+    // been clamped into a range that cannot reach the Rare cutoff. The
+    // belt-and-suspenders frontend test in web/lib/firstLightFloor.test.ts
+    // additionally runs computeRarity on these post-clamp DNAs and asserts
+    // tier === 'Common'.
+    let env = Env::default();
+    for s in 0u8..=0xFF {
+        let dna = BytesN::from_array(&env, &[s; 32]);
+        let clamped = crate::clamp_first_light_dna(&env, &dna).to_array();
+
+        // Rarity nibble: byte 17 low 4 bits must be <= FIRST_LIGHT_RARITY_CAP
+        // (4 today, capping the floor(nibble/5) contribution at 0).
+        let rarity = clamped[dna::IDX_AFFINITY_RARITY] & 0x0F;
         assert!(
             rarity <= crate::FIRST_LIGHT_RARITY_CAP,
             "rarity nibble {} exceeded Common cap {} for seed {:#x}",
             rarity,
             crate::FIRST_LIGHT_RARITY_CAP,
+            s,
+        );
+
+        // Class: byte 0 high nibble must not be in MYTHIC_CLASS_IDS (14/15).
+        let class_idx = (clamped[dna::IDX_CLASS] >> 4) & 0x0F;
+        for m in crate::FIRST_LIGHT_MYTHIC_CLASS_IDS.iter() {
+            assert_ne!(
+                class_idx, *m,
+                "class {} hit a mythic id for seed {:#x}",
+                class_idx, s,
+            );
+        }
+
+        // Atmosphere idx: byte 2 high 3 bits must not be in {4, 6, 7}.
+        let atm_idx = (clamped[dna::IDX_ATMOSPHERE] >> 5) & 0x07;
+        for m in crate::FIRST_LIGHT_MYTHIC_ATM_IDS.iter() {
+            assert_ne!(
+                atm_idx, *m,
+                "atmosphere idx {} hit mythic for seed {:#x}",
+                atm_idx, s,
+            );
+        }
+        // Atmosphere density: byte 2 low 5 bits must be <= 27 (cuts the +2).
+        let atm_density = clamped[dna::IDX_ATMOSPHERE] & 0x1F;
+        assert!(
+            atm_density <= crate::FIRST_LIGHT_ATM_DENSITY_CAP,
+            "atmosphere density {} >= 28 for seed {:#x}",
+            atm_density,
+            s,
+        );
+
+        // Feature idx: byte 3 high nibble must not be in {8, 9, 10}.
+        let feat_idx = (clamped[dna::IDX_FEATURE] >> 4) & 0x0F;
+        for m in crate::FIRST_LIGHT_MYTHIC_FEAT_IDS.iter() {
+            assert_ne!(
+                feat_idx, *m,
+                "feature idx {} hit mythic for seed {:#x}",
+                feat_idx, s,
+            );
+        }
+        // Feature intensity: byte 3 low nibble must be <= 13.
+        let feat_intensity = clamped[dna::IDX_FEATURE] & 0x0F;
+        assert!(
+            feat_intensity <= crate::FIRST_LIGHT_FEAT_INTENSITY_CAP,
+            "feature intensity {} >= 14 for seed {:#x}",
+            feat_intensity,
+            s,
+        );
+
+        // Aura idx: byte 5 high 3 bits must not be in {5, 7}.
+        let aura_idx = (clamped[dna::IDX_AURA] >> 5) & 0x07;
+        for m in crate::FIRST_LIGHT_MYTHIC_AURA_IDS.iter() {
+            assert_ne!(
+                aura_idx, *m,
+                "aura idx {} hit mythic for seed {:#x}",
+                aura_idx, s,
+            );
+        }
+        // Aura intensity: byte 5 low 5 bits must be <= 27.
+        let aura_intensity = clamped[dna::IDX_AURA] & 0x1F;
+        assert!(
+            aura_intensity <= crate::FIRST_LIGHT_AURA_INTENSITY_CAP,
+            "aura intensity {} >= 28 for seed {:#x}",
+            aura_intensity,
+            s,
+        );
+
+        // Moons: byte 4 high 3 bits must be <= 1 (zeros the contribution).
+        let moons = (clamped[dna::IDX_MOON] >> 5) & 0x07;
+        assert!(
+            moons <= crate::FIRST_LIGHT_MOON_COUNT_CAP,
+            "moon count {} > {} for seed {:#x}",
+            moons,
+            crate::FIRST_LIGHT_MOON_COUNT_CAP,
+            s,
+        );
+
+        // Rings: byte 1 low 3 bits must be <= 2 (zeros the contribution).
+        let rings = clamped[dna::IDX_SURFACE] & 0x07;
+        assert!(
+            rings <= crate::FIRST_LIGHT_RING_COUNT_CAP,
+            "ring count {} > {} for seed {:#x}",
+            rings,
+            crate::FIRST_LIGHT_RING_COUNT_CAP,
+            s,
+        );
+    }
+}
+
+#[test]
+fn first_light_reveal_yields_clamped_dna() {
+    // End-to-end check that `reveal_first_light` actually invokes
+    // `clamp_first_light_dna` and the clamped bytes land in storage. We test
+    // a handful of seeds (one per "tier boundary" of the bit-pattern space)
+    // — the broader byte-level invariants are proved by the sweep test above
+    // against the raw clamp; this just pins that the integration wire-up is
+    // correct.
+    for seed in [0x11u8, 0x55, 0xBB, 0xFF] {
+        let f = setup(seed);
+        let keeper = Address::generate(&f.env);
+        let id = claim_first_light(&f, &keeper);
+        let dna = f.planet.dna_of(&id).to_array();
+
+        let rarity = dna[dna::IDX_AFFINITY_RARITY] & 0x0F;
+        assert!(
+            rarity <= crate::FIRST_LIGHT_RARITY_CAP,
+            "rarity nibble {} exceeded cap for seed {:#x}",
+            rarity,
             seed,
         );
         let class_idx = (dna[dna::IDX_CLASS] >> 4) & 0x0F;
         for m in crate::FIRST_LIGHT_MYTHIC_CLASS_IDS.iter() {
-            assert_ne!(
-                class_idx, *m,
-                "First Light class {} hit a mythic id for seed {:#x}",
-                class_idx, seed
-            );
+            assert_ne!(class_idx, *m, "mythic class slipped through for {:#x}", seed);
+        }
+        let atm_idx = (dna[dna::IDX_ATMOSPHERE] >> 5) & 0x07;
+        for m in crate::FIRST_LIGHT_MYTHIC_ATM_IDS.iter() {
+            assert_ne!(atm_idx, *m, "mythic atm slipped through for {:#x}", seed);
+        }
+        let feat_idx = (dna[dna::IDX_FEATURE] >> 4) & 0x0F;
+        for m in crate::FIRST_LIGHT_MYTHIC_FEAT_IDS.iter() {
+            assert_ne!(feat_idx, *m, "mythic feature slipped through for {:#x}", seed);
+        }
+        let aura_idx = (dna[dna::IDX_AURA] >> 5) & 0x07;
+        for m in crate::FIRST_LIGHT_MYTHIC_AURA_IDS.iter() {
+            assert_ne!(aura_idx, *m, "mythic aura slipped through for {:#x}", seed);
         }
     }
 }
