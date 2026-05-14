@@ -297,6 +297,41 @@ pub const FIRST_LIGHT_RARITY_CAP: u8 = 4;
 /// top bit of the nibble (mythic indices are 14/15 = 0b1110/0b1111).
 pub const FIRST_LIGHT_MYTHIC_CLASS_IDS: [u8; 2] = [14, 15];
 
+/// Atmosphere indices that score `+4` mythic in the rarity scorer (aurora=4,
+/// sparkle=6, eclipse=7 — see `RARE_ATMOSPHERES` in art/src/rarity.ts; the
+/// constant is mis-named there but rewards +4 like a mythic). The byte 2
+/// high three bits encode 0..=7; clamping these three indices to safe values
+/// removes the +4 contribution.
+pub const FIRST_LIGHT_MYTHIC_ATM_IDS: [u8; 3] = [4, 6, 7];
+
+/// Feature indices that score `+4` mythic (runes=8, blossoms=9, spires=10 —
+/// see `MYTHIC_FEATURES` in art/src/rarity.ts).
+pub const FIRST_LIGHT_MYTHIC_FEAT_IDS: [u8; 3] = [8, 9, 10];
+
+/// Aura indices that score `+5` mythic (aurora-aura=5, crown=7 — see
+/// `MYTHIC_AURAS` in art/src/rarity.ts).
+pub const FIRST_LIGHT_MYTHIC_AURA_IDS: [u8; 2] = [5, 7];
+
+/// Atmosphere density threshold: scorer awards +2 for density ≥ 28. We clamp
+/// the low 5 bits of byte 2 to <= 27.
+pub const FIRST_LIGHT_ATM_DENSITY_CAP: u8 = 27;
+
+/// Feature intensity threshold: scorer awards +2 for intensity ≥ 14. We
+/// clamp the low 4 bits of byte 3 to <= 13.
+pub const FIRST_LIGHT_FEAT_INTENSITY_CAP: u8 = 13;
+
+/// Aura intensity threshold: scorer awards +2 for intensity ≥ 28. We clamp
+/// the low 5 bits of byte 5 to <= 27.
+pub const FIRST_LIGHT_AURA_INTENSITY_CAP: u8 = 27;
+
+/// Max moon count after clamping (high 3 bits of byte 4). Scorer awards
+/// `min(3, max(0, count - 1))` so capping at 1 zeros the contribution.
+pub const FIRST_LIGHT_MOON_COUNT_CAP: u8 = 1;
+
+/// Max ring count after clamping (low 3 bits of byte 1). Scorer awards
+/// `min(4, max(0, count - 2))` so capping at 2 zeros the contribution.
+pub const FIRST_LIGHT_RING_COUNT_CAP: u8 = 2;
+
 #[contractimpl]
 impl PlanetContract {
     #[allow(clippy::too_many_arguments)]
@@ -1283,25 +1318,99 @@ fn update_healthy_since(e: &Env, id: u32, v: &Vitals, now: u32) {
     }
 }
 
-/// Clamp generated DNA to the Common-tier floor: zero the rarity nibble's
-/// upper bits so it stays at most `FIRST_LIGHT_RARITY_CAP`, and deflect any
-/// mythic class index away from Hollow/Aether by masking off the top bit of
-/// the class nibble (14/15 → 6/7, i.e. Jungle/Crystal — still exotic but no
-/// longer mythic per `MYTHIC_CLASS_IDS` in art/src/rarity.ts).
+/// Clamp generated DNA to the Common-tier floor. Defends every byte the
+/// rarity scorer reads (see `computeRarity` in art/src/rarity.ts), not just
+/// the rarity nibble + class — which alone are insufficient to keep First
+/// Light planets out of Rare+. Every clamp here corresponds to a scorer
+/// contribution that would otherwise push the total ≥ 12 (the Rare cutoff).
+///
+/// After clamping, the maximum achievable score is:
+///   `+3` (Generation 0 baseline, unavoidable for First Light)
+///   `+2` (an exotic-but-non-mythic class index 8..=13, allowed through)
+///   `+1` (a rare feature: eyes / volcanoes / archipelago)
+///   `+1` (a rare aura: pulse / static)
+///   ----
+///   `=7`, well below the Rare cutoff of 12.
+///
+/// Clamps (each one is a typed contribution removal):
+///   1. Rarity nibble (byte 17 low) ≤ `FIRST_LIGHT_RARITY_CAP` so the
+///      `floor(nibble / 5)` term contributes 0.
+///   2. Class nibble (byte 0 high): mythic 14/15 → 6/7 (Jungle/Crystal —
+///      both outside `EXOTIC_CLASS_IDS = {8..=13}`, so no exotic bonus
+///      either). Non-mythic indices are left as-is.
+///   3. Atmosphere idx (byte 2 high 3 bits): mythic ids {4, 6, 7} deflect
+///      via `& 0b011` to {0, 0, 3} (none / none / storm) — none of which
+///      land in the +4 mythic set.
+///   4. Atmosphere density (byte 2 low 5 bits) capped at 27 so the
+///      `density ≥ 28 → +2` branch never fires.
+///   5. Feature idx (byte 3 high nibble): mythic ids {8, 9, 10} deflect
+///      via `& 0b0111` to {0, 1, 2} (none / craters / oceans).
+///   6. Feature intensity (byte 3 low nibble) capped at 13 so the
+///      `intensity ≥ 14 → +2` branch never fires.
+///   7. Aura idx (byte 5 high 3 bits): mythic ids {5, 7} deflect to safe
+///      non-mythic values. The mapping is hand-picked so the deflection
+///      lands inside 0..=4 (none/halo/glow/shadow/pulse).
+///   8. Aura intensity (byte 5 low 5 bits) capped at 27.
+///   9. Moon count (byte 4 high 3 bits) capped at 1 → 0 points
+///      (`min(3, max(0, count - 1)) = 0`).
+///  10. Ring count (byte 1 low 3 bits) capped at 2 → 0 points
+///      (`min(4, max(0, count - 2)) = 0`).
 fn clamp_first_light_dna(e: &Env, dna: &BytesN<32>) -> BytesN<32> {
     let mut out = dna.to_array();
-    // Rarity nibble: clamp the low 4 bits of byte 17 to the Common cap.
+
+    // 1. Rarity nibble.
     let aff = out[dna::IDX_AFFINITY_RARITY] & 0xF0;
     let rarity = (out[dna::IDX_AFFINITY_RARITY] & 0x0F).min(FIRST_LIGHT_RARITY_CAP);
     out[dna::IDX_AFFINITY_RARITY] = aff | rarity;
-    // Class nibble: mythic ids are 14 (0xE) and 15 (0xF) per the constant
-    // table. Masking off the high bit of the nibble (`& 0b0111`) maps both
-    // to the low-half "exotic" range. Skip the work for non-mythic classes
-    // so the byte is left alone for indices 0..=13.
-    let high = (out[dna::IDX_CLASS] >> 4) & 0x0F;
-    if FIRST_LIGHT_MYTHIC_CLASS_IDS.contains(&high) {
-        out[dna::IDX_CLASS] = ((high & 0b0111) << 4) | (out[dna::IDX_CLASS] & 0x0F);
+
+    // 2. Class nibble. Mythic ids 14 (0xE) and 15 (0xF) → 6 / 7 via `& 0b0111`.
+    // 6 = Jungle (basic biome), 7 = Crystal — neither is in `EXOTIC_CLASS_IDS`
+    // (8..=13) so neither earns the +2 exotic bonus either.
+    let class_idx = (out[dna::IDX_CLASS] >> 4) & 0x0F;
+    if FIRST_LIGHT_MYTHIC_CLASS_IDS.contains(&class_idx) {
+        out[dna::IDX_CLASS] = ((class_idx & 0b0111) << 4) | (out[dna::IDX_CLASS] & 0x0F);
     }
+
+    // 3. Atmosphere idx (byte 2 high 3 bits per art/src/dna.ts:79).
+    //    Mythic set {4, 6, 7} → deflect via `& 0b011` → {0, 2, 3} (none /
+    //    thick / storm), all outside the mythic set.
+    let atm_idx = (out[dna::IDX_ATMOSPHERE] >> 5) & 0x07;
+    if FIRST_LIGHT_MYTHIC_ATM_IDS.contains(&atm_idx) {
+        out[dna::IDX_ATMOSPHERE] = ((atm_idx & 0b011) << 5) | (out[dna::IDX_ATMOSPHERE] & 0x1F);
+    }
+    // 4. Atmosphere density cap. Re-read byte 2 because (3) may have touched
+    //    the high bits; the low 5 bits are unchanged but we re-mask for clarity.
+    let atm_density = (out[dna::IDX_ATMOSPHERE] & 0x1F).min(FIRST_LIGHT_ATM_DENSITY_CAP);
+    out[dna::IDX_ATMOSPHERE] = (out[dna::IDX_ATMOSPHERE] & 0xE0) | atm_density;
+
+    // 5. Feature idx (byte 3 high nibble per art/src/dna.ts:82).
+    //    Mythic set {8, 9, 10} → deflect via `& 0b0111` → {0, 1, 2}.
+    let feat_idx = (out[dna::IDX_FEATURE] >> 4) & 0x0F;
+    if FIRST_LIGHT_MYTHIC_FEAT_IDS.contains(&feat_idx) {
+        out[dna::IDX_FEATURE] = ((feat_idx & 0b0111) << 4) | (out[dna::IDX_FEATURE] & 0x0F);
+    }
+    // 6. Feature intensity cap (byte 3 low nibble).
+    let feat_intensity = (out[dna::IDX_FEATURE] & 0x0F).min(FIRST_LIGHT_FEAT_INTENSITY_CAP);
+    out[dna::IDX_FEATURE] = (out[dna::IDX_FEATURE] & 0xF0) | feat_intensity;
+
+    // 7. Aura idx (byte 5 high 3 bits per art/src/dna.ts:88).
+    //    Mythic set {5, 7} → deflect via `& 0b011` → {1, 3} (halo / shadow).
+    let aura_idx = (out[dna::IDX_AURA] >> 5) & 0x07;
+    if FIRST_LIGHT_MYTHIC_AURA_IDS.contains(&aura_idx) {
+        out[dna::IDX_AURA] = ((aura_idx & 0b011) << 5) | (out[dna::IDX_AURA] & 0x1F);
+    }
+    // 8. Aura intensity cap (byte 5 low 5 bits).
+    let aura_intensity = (out[dna::IDX_AURA] & 0x1F).min(FIRST_LIGHT_AURA_INTENSITY_CAP);
+    out[dna::IDX_AURA] = (out[dna::IDX_AURA] & 0xE0) | aura_intensity;
+
+    // 9. Moon count (byte 4 high 3 bits per art/src/dna.ts:85).
+    let moon_count = ((out[dna::IDX_MOON] >> 5) & 0x07).min(FIRST_LIGHT_MOON_COUNT_CAP);
+    out[dna::IDX_MOON] = (moon_count << 5) | (out[dna::IDX_MOON] & 0x1F);
+
+    // 10. Ring count (byte 1 low 3 bits per art/src/dna.ts:77).
+    let ring_count = (out[dna::IDX_SURFACE] & 0x07).min(FIRST_LIGHT_RING_COUNT_CAP);
+    out[dna::IDX_SURFACE] = (out[dna::IDX_SURFACE] & 0xF8) | ring_count;
+
     BytesN::from_array(e, &out)
 }
 
