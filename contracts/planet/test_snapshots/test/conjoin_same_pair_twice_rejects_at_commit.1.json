@@ -85,7 +85,6 @@
       ]
     ],
     [],
-    [],
     [
       [
         "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOLZM",
@@ -119,7 +118,7 @@
   ],
   "ledger": {
     "protocol_version": 25,
-    "sequence_number": 24,
+    "sequence_number": 824,
     "timestamp": 0,
     "network_id": "0000000000000000000000000000000000000000000000000000000000000000",
     "base_reserve": 0,
@@ -242,7 +241,7 @@
                               "symbol": "value"
                             },
                             "val": {
-                              "bytes": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3"
+                              "bytes": "4343434343434343434343434343434343434343434343434343434343434343"
                             }
                           }
                         ]
@@ -486,7 +485,7 @@
               },
               "durability": "persistent",
               "val": {
-                "bytes": "c3c3c3c3c3c3c3c3000000000000006e00c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3"
+                "bytes": "4343434343434343000000000000006e00434343434343434343434343434343"
               }
             }
           },
@@ -513,7 +512,7 @@
               },
               "durability": "persistent",
               "val": {
-                "bytes": "c3c3c3c3c3c3c3c3000000000000006e00c3c2c3c3c3c3c3c3c3c3c3c3c3c3c3"
+                "bytes": "4343434343434343000000000000006e00434243434343434343434343434343"
               }
             }
           },
@@ -540,7 +539,7 @@
               },
               "durability": "persistent",
               "val": {
-                "bytes": "c2c3c3c3c2c3c3c300000000000000d201c4c1c3c3c3c3c3c3c3c3c3c3c3c3c3"
+                "bytes": "434343434343434300000000000000d201444143434343434343434343434343"
               }
             }
           },
@@ -783,7 +782,7 @@
               },
               "durability": "persistent",
               "val": {
-                "bytes": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c300000000000000000000000000"
+                "bytes": "4343434343434343434343434343434343434300000000000000000000000000"
               }
             }
           },
@@ -810,7 +809,7 @@
               },
               "durability": "persistent",
               "val": {
-                "bytes": "c2c3c3c3c2c3c3c3c3c3c3c2c3c3c3c2c2c3c300000000000000000000000000"
+                "bytes": "4243434342434343434343424343434242434300000000000000000000000000"
               }
             }
           },
@@ -837,7 +836,7 @@
               },
               "durability": "persistent",
               "val": {
-                "bytes": "c3c3c3c3c3c3c3c3c3c3c3c2c3c3c3c2c3c3c300000000000000000000000000"
+                "bytes": "4343434343434343434343424343434243424300000000000000000000000000"
               }
             }
           },

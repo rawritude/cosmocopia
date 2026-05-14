@@ -85,7 +85,6 @@
       ]
     ],
     [],
-    [],
     [
       [
         "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOLZM",
@@ -242,7 +241,7 @@
                               "symbol": "value"
                             },
                             "val": {
-                              "bytes": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3"
+                              "bytes": "4646464646464646464646464646464646464646464646464646464646464646"
                             }
                           }
                         ]
@@ -276,7 +275,7 @@
               },
               "durability": "persistent",
               "val": {
-                "u32": 3
+                "u32": 2
               }
             }
           },
@@ -348,7 +347,7 @@
               "key": {
                 "vec": [
                   {
-                    "symbol": "CivTier"
+                    "symbol": "Commitment"
                   },
                   {
                     "u32": 2
@@ -357,13 +356,64 @@
               },
               "durability": "persistent",
               "val": {
-                "u32": 0
+                "map": [
+                  {
+                    "key": {
+                      "symbol": "commit_ledger"
+                    },
+                    "val": {
+                      "u32": 16
+                    }
+                  },
+                  {
+                    "key": {
+                      "symbol": "committer"
+                    },
+                    "val": {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOLZM"
+                    }
+                  },
+                  {
+                    "key": {
+                      "symbol": "kind"
+                    },
+                    "val": {
+                      "vec": [
+                        {
+                          "symbol": "Conjoin"
+                        },
+                        {
+                          "u32": 0
+                        },
+                        {
+                          "u32": 1
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "key": {
+                      "symbol": "target_round"
+                    },
+                    "val": {
+                      "u64": "210"
+                    }
+                  },
+                  {
+                    "key": {
+                      "symbol": "to"
+                    },
+                    "val": {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOLZM"
+                    }
+                  }
+                ]
               }
             }
           },
           "ext": "v0"
         },
-        "live_until": 518424
+        "live_until": 518416
       },
       {
         "entry": {
@@ -443,40 +493,6 @@
               "key": {
                 "vec": [
                   {
-                    "symbol": "Coords"
-                  },
-                  {
-                    "u32": 2
-                  }
-                ]
-              },
-              "durability": "persistent",
-              "val": {
-                "vec": [
-                  {
-                    "i32": 0
-                  },
-                  {
-                    "i32": 0
-                  }
-                ]
-              }
-            }
-          },
-          "ext": "v0"
-        },
-        "live_until": 518424
-      },
-      {
-        "entry": {
-          "last_modified_ledger_seq": 0,
-          "data": {
-            "contract_data": {
-              "ext": "v0",
-              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
-              "key": {
-                "vec": [
-                  {
                     "symbol": "Dna"
                   },
                   {
@@ -486,7 +502,7 @@
               },
               "durability": "persistent",
               "val": {
-                "bytes": "c3c3c3c3c3c3c3c3000000000000006e00c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3"
+                "bytes": "4646464646464646000000000000006e00464646464646464646464646464646"
               }
             }
           },
@@ -513,7 +529,7 @@
               },
               "durability": "persistent",
               "val": {
-                "bytes": "c3c3c3c3c3c3c3c3000000000000006e00c3c2c3c3c3c3c3c3c3c3c3c3c3c3c3"
+                "bytes": "4646464646464646000000000000006e00464746464646464646464646464646"
               }
             }
           },
@@ -531,33 +547,6 @@
               "key": {
                 "vec": [
                   {
-                    "symbol": "Dna"
-                  },
-                  {
-                    "u32": 2
-                  }
-                ]
-              },
-              "durability": "persistent",
-              "val": {
-                "bytes": "c2c3c3c3c2c3c3c300000000000000d201c4c1c3c3c3c3c3c3c3c3c3c3c3c3c3"
-              }
-            }
-          },
-          "ext": "v0"
-        },
-        "live_until": 518424
-      },
-      {
-        "entry": {
-          "last_modified_ledger_seq": 0,
-          "data": {
-            "contract_data": {
-              "ext": "v0",
-              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
-              "key": {
-                "vec": [
-                  {
                     "symbol": "GlobalTokens"
                   },
                   {
@@ -612,33 +601,6 @@
               "key": {
                 "vec": [
                   {
-                    "symbol": "GlobalTokens"
-                  },
-                  {
-                    "u32": 2
-                  }
-                ]
-              },
-              "durability": "persistent",
-              "val": {
-                "u32": 2
-              }
-            }
-          },
-          "ext": "v0"
-        },
-        "live_until": 4119
-      },
-      {
-        "entry": {
-          "last_modified_ledger_seq": 0,
-          "data": {
-            "contract_data": {
-              "ext": "v0",
-              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
-              "key": {
-                "vec": [
-                  {
                     "symbol": "GlobalTokensIndex"
                   },
                   {
@@ -682,33 +644,6 @@
           "ext": "v0"
         },
         "live_until": 4111
-      },
-      {
-        "entry": {
-          "last_modified_ledger_seq": 0,
-          "data": {
-            "contract_data": {
-              "ext": "v0",
-              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
-              "key": {
-                "vec": [
-                  {
-                    "symbol": "GlobalTokensIndex"
-                  },
-                  {
-                    "u32": 2
-                  }
-                ]
-              },
-              "durability": "persistent",
-              "val": {
-                "u32": 2
-              }
-            }
-          },
-          "ext": "v0"
-        },
-        "live_until": 4119
       },
       {
         "entry": {
@@ -783,7 +718,7 @@
               },
               "durability": "persistent",
               "val": {
-                "bytes": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c300000000000000000000000000"
+                "bytes": "4646464646464646464646464646464646464600000000000000000000000000"
               }
             }
           },
@@ -810,40 +745,13 @@
               },
               "durability": "persistent",
               "val": {
-                "bytes": "c2c3c3c3c2c3c3c3c3c3c3c2c3c3c3c2c2c3c300000000000000000000000000"
+                "bytes": "4746464647464646464646474646464747464600000000000000000000000000"
               }
             }
           },
           "ext": "v0"
         },
         "live_until": 518416
-      },
-      {
-        "entry": {
-          "last_modified_ledger_seq": 0,
-          "data": {
-            "contract_data": {
-              "ext": "v0",
-              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
-              "key": {
-                "vec": [
-                  {
-                    "symbol": "Latent"
-                  },
-                  {
-                    "u32": 2
-                  }
-                ]
-              },
-              "durability": "persistent",
-              "val": {
-                "bytes": "c3c3c3c3c3c3c3c3c3c3c3c2c3c3c3c2c3c3c300000000000000000000000000"
-              }
-            }
-          },
-          "ext": "v0"
-        },
-        "live_until": 518424
       },
       {
         "entry": {
@@ -898,33 +806,6 @@
           "ext": "v0"
         },
         "live_until": 518416
-      },
-      {
-        "entry": {
-          "last_modified_ledger_seq": 0,
-          "data": {
-            "contract_data": {
-              "ext": "v0",
-              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
-              "key": {
-                "vec": [
-                  {
-                    "symbol": "Owner"
-                  },
-                  {
-                    "u32": 2
-                  }
-                ]
-              },
-              "durability": "persistent",
-              "val": {
-                "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOLZM"
-              }
-            }
-          },
-          "ext": "v0"
-        },
-        "live_until": 4119
       },
       {
         "entry": {
@@ -1024,50 +905,6 @@
               "key": {
                 "vec": [
                   {
-                    "symbol": "OwnerTokens"
-                  },
-                  {
-                    "map": [
-                      {
-                        "key": {
-                          "symbol": "index"
-                        },
-                        "val": {
-                          "u32": 2
-                        }
-                      },
-                      {
-                        "key": {
-                          "symbol": "owner"
-                        },
-                        "val": {
-                          "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOLZM"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              "durability": "persistent",
-              "val": {
-                "u32": 2
-              }
-            }
-          },
-          "ext": "v0"
-        },
-        "live_until": 4119
-      },
-      {
-        "entry": {
-          "last_modified_ledger_seq": 0,
-          "data": {
-            "contract_data": {
-              "ext": "v0",
-              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
-              "key": {
-                "vec": [
-                  {
                     "symbol": "OwnerTokensIndex"
                   },
                   {
@@ -1122,33 +959,6 @@
               "key": {
                 "vec": [
                   {
-                    "symbol": "OwnerTokensIndex"
-                  },
-                  {
-                    "u32": 2
-                  }
-                ]
-              },
-              "durability": "persistent",
-              "val": {
-                "u32": 2
-              }
-            }
-          },
-          "ext": "v0"
-        },
-        "live_until": 4119
-      },
-      {
-        "entry": {
-          "last_modified_ledger_seq": 0,
-          "data": {
-            "contract_data": {
-              "ext": "v0",
-              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
-              "key": {
-                "vec": [
-                  {
                     "symbol": "SpentPair"
                   },
                   {
@@ -1167,7 +977,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 518424
+        "live_until": 4111
       },
       {
         "entry": {
@@ -1328,82 +1138,6 @@
             "contract_data": {
               "ext": "v0",
               "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
-              "key": {
-                "vec": [
-                  {
-                    "symbol": "Vitals"
-                  },
-                  {
-                    "u32": 2
-                  }
-                ]
-              },
-              "durability": "persistent",
-              "val": {
-                "map": [
-                  {
-                    "key": {
-                      "symbol": "biomass"
-                    },
-                    "val": {
-                      "u32": 128
-                    }
-                  },
-                  {
-                    "key": {
-                      "symbol": "gravity"
-                    },
-                    "val": {
-                      "u32": 128
-                    }
-                  },
-                  {
-                    "key": {
-                      "symbol": "hydration"
-                    },
-                    "val": {
-                      "u32": 128
-                    }
-                  },
-                  {
-                    "key": {
-                      "symbol": "last_ledger"
-                    },
-                    "val": {
-                      "u32": 24
-                    }
-                  },
-                  {
-                    "key": {
-                      "symbol": "spirit"
-                    },
-                    "val": {
-                      "u32": 160
-                    }
-                  },
-                  {
-                    "key": {
-                      "symbol": "temperature"
-                    },
-                    "val": {
-                      "u32": 128
-                    }
-                  }
-                ]
-              }
-            }
-          },
-          "ext": "v0"
-        },
-        "live_until": 518424
-      },
-      {
-        "entry": {
-          "last_modified_ledger_seq": 0,
-          "data": {
-            "contract_data": {
-              "ext": "v0",
-              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
               "key": "ledger_key_contract_instance",
               "durability": "persistent",
               "val": {
@@ -1542,7 +1276,7 @@
                         ]
                       },
                       "val": {
-                        "u32": 3
+                        "u32": 2
                       }
                     },
                     {
@@ -1554,7 +1288,7 @@
                         ]
                       },
                       "val": {
-                        "u32": 3
+                        "u32": 2
                       }
                     }
                   ]

@@ -85,7 +85,6 @@
       ]
     ],
     [],
-    [],
     [
       [
         "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOLZM",
@@ -114,7 +113,6 @@
         }
       ]
     ],
-    [],
     []
   ],
   "ledger": {
@@ -242,7 +240,7 @@
                               "symbol": "value"
                             },
                             "val": {
-                              "bytes": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3"
+                              "bytes": "4747474747474747474747474747474747474747474747474747474747474747"
                             }
                           }
                         ]
@@ -486,7 +484,7 @@
               },
               "durability": "persistent",
               "val": {
-                "bytes": "c3c3c3c3c3c3c3c3000000000000006e00c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3"
+                "bytes": "4747474747474747000000000000006e00474747474747474747474747474747"
               }
             }
           },
@@ -513,7 +511,7 @@
               },
               "durability": "persistent",
               "val": {
-                "bytes": "c3c3c3c3c3c3c3c3000000000000006e00c3c2c3c3c3c3c3c3c3c3c3c3c3c3c3"
+                "bytes": "4747474747474747000000000000006e00474647474747474747474747474747"
               }
             }
           },
@@ -540,7 +538,7 @@
               },
               "durability": "persistent",
               "val": {
-                "bytes": "c2c3c3c3c2c3c3c300000000000000d201c4c1c3c3c3c3c3c3c3c3c3c3c3c3c3"
+                "bytes": "474747474747474700000000000000d201484547474747474747474747474747"
               }
             }
           },
@@ -783,7 +781,7 @@
               },
               "durability": "persistent",
               "val": {
-                "bytes": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c300000000000000000000000000"
+                "bytes": "4747474747474747474747474747474747474700000000000000000000000000"
               }
             }
           },
@@ -810,7 +808,7 @@
               },
               "durability": "persistent",
               "val": {
-                "bytes": "c2c3c3c3c2c3c3c3c3c3c3c2c3c3c3c2c2c3c300000000000000000000000000"
+                "bytes": "4647474746474747474747464747474646474700000000000000000000000000"
               }
             }
           },
@@ -837,7 +835,7 @@
               },
               "durability": "persistent",
               "val": {
-                "bytes": "c3c3c3c3c3c3c3c3c3c3c3c2c3c3c3c2c3c3c300000000000000000000000000"
+                "bytes": "4747474747474747474747464747474647464700000000000000000000000000"
               }
             }
           },
@@ -1705,5 +1703,216 @@
       }
     ]
   },
-  "events": []
+  "events": [
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
+        "type_": "contract",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "mint"
+              },
+              {
+                "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOLZM"
+              }
+            ],
+            "data": {
+              "map": [
+                {
+                  "key": {
+                    "symbol": "token_id"
+                  },
+                  "val": {
+                    "u32": 2
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
+        "type_": "contract",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "pair_spent"
+              }
+            ],
+            "data": {
+              "map": [
+                {
+                  "key": {
+                    "symbol": "child_id"
+                  },
+                  "val": {
+                    "u32": 2
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "parent_a"
+                  },
+                  "val": {
+                    "u32": 0
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "parent_b"
+                  },
+                  "val": {
+                    "u32": 1
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
+        "type_": "contract",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "born"
+              },
+              {
+                "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOLZM"
+              }
+            ],
+            "data": {
+              "map": [
+                {
+                  "key": {
+                    "symbol": "drand_round"
+                  },
+                  "val": {
+                    "u64": "210"
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "generation"
+                  },
+                  "val": {
+                    "u32": 1
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "id"
+                  },
+                  "val": {
+                    "u32": 2
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
+        "type_": "contract",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "conjoin"
+              }
+            ],
+            "data": {
+              "map": [
+                {
+                  "key": {
+                    "symbol": "child"
+                  },
+                  "val": {
+                    "u32": 2
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "drand_round"
+                  },
+                  "val": {
+                    "u64": "210"
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "parent_a"
+                  },
+                  "val": {
+                    "u32": 0
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "parent_b"
+                  },
+                  "val": {
+                    "u32": 1
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
+        "type_": "contract",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "pop"
+              },
+              {
+                "u32": 2
+              }
+            ],
+            "data": {
+              "map": [
+                {
+                  "key": {
+                    "symbol": "population"
+                  },
+                  "val": {
+                    "u32": 5
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    }
+  ]
 }

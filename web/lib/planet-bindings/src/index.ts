@@ -65,7 +65,15 @@ export const Errors = {
   /**
    * `reveal_first_light` exhausted the coord-collision retry budget.
    */
-  16: {message:"FirstLightCoordCollision"}
+  16: {message:"FirstLightCoordCollision"},
+  /**
+   * A required storage slot was never populated (NativeToken / BurnAddress).
+   */
+  17: {message:"Uninitialized"},
+  /**
+   * The (parent_a, parent_b) pair has already produced a child.
+   */
+  18: {message:"PairAlreadySpent"}
 }
 
 
