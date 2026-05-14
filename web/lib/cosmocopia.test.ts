@@ -10,6 +10,10 @@ const tokensInOrder: number[] = [];                            // global enumera
 const ownerTokens = new Map<string, number[]>();               // per-owner enumerable
 const populationMap = new Map<number, number>();               // 0..5
 const civTierMap = new Map<number, number>();                  // 0..4
+const soulboundMap = new Map<number, boolean>();               // First Light
+const healthySinceMap = new Map<number, number>();             // First Light
+const firstLightClaimedMap = new Map<string, boolean>();       // by keeper
+const distributionPoolValue = { value: 0n };                    // i128 mirror
 const vitalsTemplate = {
   biomass: 128, gravity: 128, hydration: 128, last_ledger: 100, spirit: 160, temperature: 128,
 };
@@ -17,16 +21,26 @@ const vitalsTemplate = {
 // Helper: wrap a value as Result::Ok in the tagged-union shape stellar-sdk uses.
 const ok = <T>(value: T) => ({ tag: 'Ok' as const, values: [value] });
 
-vi.mock('./planet-bindings/src/index', async () => {
-  // Re-export the real Errors map so the test cannot silently desync from
-  // the bindings when the contract enum is renumbered (audit L-4). We only
-  // override `Client` so the test never touches the network.
-  const actual = await vi.importActual<typeof import('./planet-bindings/src/index')>(
-    './planet-bindings/src/index',
-  );
+vi.mock('./planet-bindings/src/index', () => {
   return {
-    ...actual,
-    Errors: actual.Errors,
+    // Mirror the regenerated bindings' Errors map so tests can assert on
+    // the orchestrator's reachable error codes (Phase 2 added 14).
+    Errors: {
+      1: { message: 'NotAdmin' },
+      2: { message: 'NotOwner' },
+      3: { message: 'DrandUnavailable' },
+      4: { message: 'UnknownPlanet' },
+      5: { message: 'SameParent' },
+      6: { message: 'OnCooldown' },
+      7: { message: 'InvalidCareAction' },
+      8: { message: 'Unhealthy' },
+      9: { message: 'RecipientNotParentOwner' },
+      10: { message: 'CooldownOutOfRange' },
+      11: { message: 'UnknownCommitment' },
+      12: { message: 'CommitmentNotReady' },
+      13: { message: 'InvalidCommitmentKind' },
+      14: { message: 'PairAlreadySpent' },
+    },
     Client: class {
       constructor(public opts: any) {}
       async balance({ account }: { account: string }) {
@@ -65,6 +79,27 @@ vi.mock('./planet-bindings/src/index', async () => {
       async civ_tier_of({ id }: { id: number }) {
         if (!ownerMap.has(id)) throw new Error(`no civ ${id}`);
         return { result: ok(civTierMap.get(id) ?? 0) };
+      }
+      async is_soulbound_of({ id }: { id: number }) {
+        // Phase 1 First Light flag. Mirrors the contract's bool default.
+        return { result: soulboundMap.get(id) ?? false };
+      }
+      async healthy_since_of({ id }: { id: number }) {
+        return { result: healthySinceMap.get(id) ?? 0 };
+      }
+      async first_light_claimed({ keeper }: { keeper: string }) {
+        return { result: firstLightClaimedMap.get(keeper) ?? false };
+      }
+      async distribution_pool() {
+        return { result: distributionPoolValue.value };
+      }
+      async claim_first_light(_args: any) {
+        return {
+          signAndSend: async () => ({ result: 7, hash: 'TXHASH_CLAIM_FL' }),
+        };
+      }
+      async reveal_first_light(_args: any) {
+        return { signAndSend: async () => ({ hash: 'TXHASH_REVEAL_FL' }) };
       }
       async care(_args: any) {
         return { signAndSend: async () => ({ hash: 'TXHASH_CLASSIC' }) };
@@ -142,6 +177,10 @@ afterEach(() => {
   ownerTokens.clear();
   populationMap.clear();
   civTierMap.clear();
+  soulboundMap.clear();
+  healthySinceMap.clear();
+  firstLightClaimedMap.clear();
+  distributionPoolValue.value = 0n;
   vi.clearAllMocks();
 });
 
@@ -339,6 +378,98 @@ describe('on-chain population + civ_tier reads', () => {
   });
 });
 
+describe('submitFirstLight (claim-reveal)', () => {
+  const wallet = {
+    status: 'connected',
+    kind: 'classic',
+    address: OWNER,
+    label: 'Freighter',
+  } as any;
+
+  it('refuses when not connected', async () => {
+    await expect(
+      cc.submitFirstLight({ status: 'idle' } as any),
+    ).rejects.toThrow(/connect a wallet/i);
+  });
+
+  it('drives committing → waiting → revealing → done and returns the reveal tx hash', async () => {
+    const phases: string[] = [];
+    const hash = await cc.submitFirstLight(wallet, (p) => phases.push(p.phase));
+    expect(hash).toBe('TXHASH_REVEAL_FL');
+    expect(phases[0]).toBe('committing');
+    expect(phases).toContain('revealing');
+    expect(phases.at(-1)).toBe('done');
+  });
+
+  it('exposes submitClaimFirstLight / submitRevealFirstLight as separate halves', async () => {
+    const id = await cc.submitClaimFirstLight(42n, wallet);
+    expect(typeof id).toBe('number');
+    const hash = await cc.submitRevealFirstLight(id, wallet);
+    expect(hash).toBe('TXHASH_REVEAL_FL');
+  });
+
+  it('firstLightClaimed reads the per-keeper flag', async () => {
+    expect(await cc.firstLightClaimed(OWNER)).toBe(false);
+    firstLightClaimedMap.set(OWNER, true);
+    expect(await cc.firstLightClaimed(OWNER)).toBe(true);
+  });
+
+  it('getPlanet pulls soulbound + healthySince from the new views', async () => {
+    seedPlanet(11, OWNER, -55, 55, 0x44, 0, 0);
+    soulboundMap.set(11, true);
+    healthySinceMap.set(11, 9_000_000);
+    const p = await cc.getPlanet(11);
+    expect(p).not.toBeNull();
+    expect(p!.soulbound).toBe(true);
+    expect(p!.healthySince).toBe(9_000_000);
+  });
+
+  it('getPlanet leaves soulbound + healthySince undefined when views fail', async () => {
+    seedPlanet(12, OWNER);
+    const Client = (await import('./planet-bindings/src/index')).Client;
+    const origSb = (Client.prototype as any).is_soulbound_of;
+    const origHs = (Client.prototype as any).healthy_since_of;
+    (Client.prototype as any).is_soulbound_of = async () => {
+      throw new Error('rpc down');
+    };
+    (Client.prototype as any).healthy_since_of = async () => {
+      throw new Error('rpc down');
+    };
+    try {
+      const p = await cc.getPlanet(12);
+      expect(p).not.toBeNull();
+      expect(p!.soulbound).toBeUndefined();
+      expect(p!.healthySince).toBeUndefined();
+    } finally {
+      (Client.prototype as any).is_soulbound_of = origSb;
+      (Client.prototype as any).healthy_since_of = origHs;
+    }
+  });
+});
+
+describe('soulboundTooltip (SOULBOUND chip copy)', () => {
+  it('says timer is paused when healthySince=0', () => {
+    expect(cc.soulboundTooltip(0)).toMatch(/timer is paused/i);
+  });
+
+  it('static description when no currentLedger is supplied', () => {
+    expect(cc.soulboundTooltip(1000)).toMatch(/Releases after 7d of consistent care/i);
+  });
+
+  it('renders a Xd Yh countdown when given currentLedger', () => {
+    const start = 1000;
+    const half = Math.floor(cc.SOULBOUND_RELEASE_LEDGERS / 2);
+    expect(cc.soulboundTooltip(start, start + half)).toMatch(/Releases in 3d/);
+  });
+
+  it('says timer met once the full window has elapsed', () => {
+    const start = 1000;
+    expect(
+      cc.soulboundTooltip(start, start + cc.SOULBOUND_RELEASE_LEDGERS),
+    ).toMatch(/timer met/i);
+  });
+});
+
 describe('unwrapResult shape handling (audit High #5)', () => {
   it('throws on Result::Err shape rather than silently returning undefined', async () => {
     // Override dna_of to return Err
@@ -360,14 +491,14 @@ describe('unwrapResult shape handling (audit High #5)', () => {
 });
 
 describe('PairAlreadySpent error reaches the orchestrator (Phase 2: First Light)', () => {
-  // Phase 2 adds Error::PairAlreadySpent (code 18) to the contract. The
+  // Phase 2 adds Error::PairAlreadySpent (code 14) to the contract. The
   // bindings expose it in the Errors map; verify the orchestrator surfaces
   // it instead of silently swallowing or returning a misleading hash. This
   // is a unit-level reachability test — actual UX-level surfacing (toast,
   // disabled button, etc.) lands in Phase 3 alongside the cross-owner UI.
-  it('lists PairAlreadySpent in the bindings Errors map at code 18', async () => {
+  it('lists PairAlreadySpent in the bindings Errors map at code 14', async () => {
     const bindings = await import('./planet-bindings/src/index');
-    expect(bindings.Errors[18]).toEqual({ message: 'PairAlreadySpent' });
+    expect(bindings.Errors[14]).toEqual({ message: 'PairAlreadySpent' });
   });
 
   it('submitCommitConjoin propagates a contract Err::PairAlreadySpent', async () => {
@@ -381,7 +512,7 @@ describe('PairAlreadySpent error reaches the orchestrator (Phase 2: First Light)
         // Mirror the stellar-sdk's failure shape: a thrown Error whose
         // message embeds the contract error code. The orchestrator should
         // not catch this — it must propagate up so the UI can branch.
-        throw new Error('HostError: Error(Contract, #18) PairAlreadySpent');
+        throw new Error('HostError: Error(Contract, #14) PairAlreadySpent');
       },
     });
     try {
